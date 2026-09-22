@@ -20,6 +20,7 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_pthread.h"
 
 #include <vector>
 #include <string>
@@ -43,6 +44,19 @@ static std::string s_session_note = "";
 
 /* ------------------------------------------------------------------ */
 static void activity(void) { power_mgmt_activity(); }
+
+/** std::thread com pilha explícita: o default do IDF (~3K) estoura a VM Lua
+ *  e é apertado p/ readdir+FATFS. Chamado NA task que cria a thread. */
+template <typename F>
+static std::thread spawn_thread(const char *name, size_t stack, F &&fn)
+{
+    esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
+    cfg.thread_name = name;
+    cfg.stack_size = stack;
+    cfg.prio = 5;
+    esp_pthread_set_cfg(&cfg);
+    return std::thread(std::forward<F>(fn));
+}
 
 static void log_line(const char *line, void *ctx)
 {
@@ -110,7 +124,7 @@ static bool is_textish(const char *name)
 
 static void list_dir_async(const std::string dir)
 {
-    std::thread([dir]() {
+    spawn_thread("io_list", 8192, [dir]() {
         auto names = std::make_shared<slint::VectorModel<slint::SharedString>>();
         auto isdir = std::make_shared<slint::VectorModel<bool>>();
 
@@ -214,7 +228,7 @@ static std::string generate_new_note_name(void)
 
 static void refresh_notes_list(void)
 {
-    std::thread([]() {
+    spawn_thread("io_notes", 8192, []() {
         auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
         DIR *dir = opendir(notes_dir().c_str());
         int count = 0;
@@ -239,7 +253,7 @@ static void refresh_notes_list(void)
 /* ---------------- scripts lua -------------------------------------- */
 static void refresh_scripts_list(void)
 {
-    std::thread([]() {
+    spawn_thread("io_scripts", 8192, []() {
         auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
         char dir[160];
         pda_path(dir, sizeof(dir), "scripts");
@@ -264,7 +278,7 @@ static void refresh_scripts_list(void)
 
 static void run_script_async(const std::string name)
 {
-    std::thread([name]() {
+    spawn_thread("lua_script", 32768, [name]() {
         if (!g_lua_mtx.try_lock()) {
             log_line("[aviso] já existe script rodando", NULL);
             return;
@@ -576,10 +590,18 @@ extern "C" void app_main(void)
 
     /* ---------- power ---------- */
     power_mgmt_set_standby_cb([](bool entering, void *) {
-        if (!entering) {
-            /* acordou: reaplica brilho/config (RAM já estava viva) */
-            slint::invoke_from_event_loop([]() { update_clock(); });
-        }
+        if (entering) return;
+        /* Acordou: o periférico SDMMC não sobrevive ao light sleep
+         * (host fica surdo: sdmmc_host_wait_for_event 0x107), então
+         * remontamos ANTES de qualquer I/O voltar a acontecer. */
+        storage_remount_sd();
+        slint::invoke_from_event_loop([]() {
+            update_clock();
+            char buf[96];
+            storage_sd_describe(buf, sizeof(buf));
+            g_ui->set_status_store(slint::SharedString(buf));
+            g_ui->set_cfg_store_info(slint::SharedString(buf));
+        });
     }, NULL);
     power_mgmt_set_hibernate_save_cb(session_save, NULL);
     power_mgmt_init();

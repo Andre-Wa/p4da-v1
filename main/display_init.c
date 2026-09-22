@@ -147,7 +147,13 @@ esp_err_t board_display_init(esp_lcd_panel_handle_t *out_panel)
             .vsync_back_porch = 8,
             .vsync_front_porch = 166,
         },
-        .flags = { .use_dma2d = true },
+        /* DMA2D OFF de propósito: com ele o draw_bitmap é assíncrono e o
+         * platform do Slint re-chama antes da transferência anterior
+         * terminar => "previous draw operation is not finished" em loop,
+         * tela rasgada e event loop faminto (touch morre). Síncrono
+         * (memcpy+cache sync) custa ~2-4 ms/frame de CPU e mata a corrida.
+         * Revisitar com gate por vsync se um dia faltar CPU (M2+). */
+        .flags = { .use_dma2d = false },
     };
 
     /* Atribuição sequencial em vez de inicializador agregado — ver nota

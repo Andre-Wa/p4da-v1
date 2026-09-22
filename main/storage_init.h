@@ -29,6 +29,12 @@ typedef enum {
  */
 esp_err_t board_storage_init(void);
 
+/** Remonta o SD (unmount + mount). Necessário após light sleep: o
+ *  periférico SDMMC não sobrevive ao sleep e o driver do IDF não
+ *  re-inicializa o host no wake (sdmmc_host_wait_for_event 0x107).
+ *  Em caso de falha, a raiz ativa cai para o interno (UI segue usável). */
+esp_err_t storage_remount_sd(void);
+
 /** Desmonta o SD e corta o rail TF_VCC (usado antes de hibernar).
  *  Após chamar, storage_sd_mounted() passa a retornar false até o
  *  próximo boot (remontar em runtime fica p/ uma fase futura). */

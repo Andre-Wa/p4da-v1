@@ -82,8 +82,9 @@ static esp_err_t sd_mount_try(const char *mount_point, int freq_khz, int width)
     return esp_vfs_fat_sdmmc_mount(mount_point, &host, &slot, &mcfg, &s_card);
 }
 
-static esp_err_t init_sdcard_sdmmc(void)
+static esp_err_t sd_acquire_ldo(void)
 {
+    if (s_ldo_sd) return ESP_OK;
     ESP_LOGI(TAG, "ligando rail TF_VCC (LDO ch%d @ %d mV)...",
              BOARD_SD_LDO_CHAN, BOARD_SD_LDO_MV);
     esp_ldo_channel_config_t ldo_cfg;
@@ -93,9 +94,23 @@ static esp_err_t init_sdcard_sdmmc(void)
     esp_err_t ret = esp_ldo_acquire_channel(&ldo_cfg, &s_ldo_sd);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "falha ao ligar LDO do SD: %s", esp_err_to_name(ret));
-        return ret;
     }
+    return ret;
+}
 
+static esp_err_t sd_mount_attempts_only(void);
+
+static esp_err_t init_sdcard_sdmmc(void)
+{
+    esp_err_t ret = sd_acquire_ldo();
+    if (ret != ESP_OK) return ret;
+
+    return sd_mount_attempts_only();
+}
+
+static esp_err_t sd_mount_attempts_only(void)
+{
+    esp_err_t ret;
     /* Degraus de frequência/largura: rápido primeiro, degrada se o
      * cartão for problemático. 4-bit só usa D0..D3 reais desta placa. */
     struct { int freq; int width; const char *label; } attempts[] = {
@@ -155,17 +170,37 @@ esp_err_t board_storage_init(void)
     init_sdcard_sdmmc();
 
     s_active = s_sd_mounted ? PDA_STORE_SD : PDA_STORE_INTERNAL;
-    seed_skeleton(pda_root());
-
+    /* semeia SEMPRE as duas raízes: o espelho de config grava nas duas e
+     * antes só a raiz ativa existia (E: "nao abriu /internal/pda/..."). */
+    seed_skeleton("/internal/pda");
     if (s_sd_mounted) {
+        seed_skeleton("/sdcard/pda");
         promote_settings_if_needed();
-    } else {
-        /* espelho defensivo: se o cartão some, o interno já tem árvore */
-        seed_skeleton("/internal/pda");
     }
 
     ESP_LOGI(TAG, "raiz ativa do sistema: %s", pda_root());
     return ESP_OK; /* ausência de cartão nunca trava o boot */
+}
+
+esp_err_t storage_remount_sd(void)
+{
+    if (s_sd_mounted && s_card) {
+        ESP_LOGW(TAG, "unmount do SD p/ remontagem...");
+        esp_vfs_fat_sdcard_unmount("/sdcard", s_card);
+        s_card = NULL;
+        s_sd_mounted = false;
+    }
+    esp_err_t err = sd_acquire_ldo();
+    if (err == ESP_OK) err = sd_mount_attempts_only();
+    if (err == ESP_OK) {
+        s_active = PDA_STORE_SD;
+        seed_skeleton("/sdcard/pda");
+        ESP_LOGI(TAG, "SD remontado apos wake");
+    } else {
+        s_active = PDA_STORE_INTERNAL;
+        ESP_LOGW(TAG, "SD nao remontou; raiz ativa -> /internal/pda");
+    }
+    return err;
 }
 
 void storage_shutdown_sd(void)

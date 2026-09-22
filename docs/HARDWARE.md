@@ -71,3 +71,13 @@ Onde protótipo e placa real divergiam, **a placa real prevalece** (marcado [FIX
 
 MX1.25 2 pinos, trava para cima, furos para você: **esquerda = BAT− (preto)**,
 **direita = BAT+ (vermelho)**. Inverter alimenta o IP5306 ao contrário.
+
+## DPI + DMA2D: por que `use_dma2d = false`
+
+Com `use_dma2d = true` o `esp_lcd_panel_draw_bitmap()` do painel DPI é
+assíncrono; o platform ESP do Slint re-chama antes do fim da transferência
+anterior e o driver responde `ESP_ERR_INVALID_STATE`
+("previous draw operation is not finished"), num loop de retries que
+rasga a tela e mata o touch. Síncrono (CPU) é determinístico e sobra CPU
+no P4. Medido no boot de 2026-09-22: sem DMA2D o bring-up completa e o
+loop do Slint roda limpo.

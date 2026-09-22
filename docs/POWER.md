@@ -66,3 +66,14 @@ ACTIVE ──idle>=dim_after_s──▶ DIM (backlight 12%)
    Já está mapeado como otimização; não fizemos agora para manter o wake instantâneo.
 4. Se HIBERNATE ficar > ~1 mA, investigar rails sempre-vivos (TLV62569, IP5306
    quiescente) — aí é limite de placa, não de firmware.
+
+## SD × light sleep: por que remontamos no wake
+
+Medido em hardware (2026-09-22): após `STANDBY`, qualquer I/O no cartão
+falha com `sdmmc_host_wait_for_event returned 0x107` — o host SDMMC sai
+do estado funcional no sleep e o driver do IDF 5.5 não o re-inicializa no
+wake. `storage_remount_sd()` (unmount + mount, ~0,3–0,5 s) roda no hook de
+wake do `power_mgmt`, antes de a UI voltar a tocar no VFS; se o cartão não
+voltar, a raiz ativa degrada para `/internal/pda` e o PDA segue usável.
+Os `--- ERROR: device reports readiness to read...` do monitor são só o
+USB-Serial-JTAG dormindo (cosmético).

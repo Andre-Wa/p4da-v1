@@ -106,3 +106,12 @@ Caracteres fora da fonte default (emoji `📁`, símbolos `↻ ↑ ▏ —`) dis
 No Slint **1.18.1** isso não foi suficiente (glifos inflados mesmo p/ ASCII,
 31,8 MiB de `.rodata`) — por isso o pin em **1.12.1**, ver
 `docs/DEPENDENCIAS.md`. Se um dia subirmos o Slint, meça `idf.py size` antes.
+- **Pilhas**: task `main` = 32 KiB (o event loop + layout do Slint 1.12 com
+  nossas telas aninhadas estourava os 8 KiB originais com
+  `Stack protection fault` em `NotesListScreen::item_geometry`);
+  threads de I/O = 8 KiB e a thread do Lua = 32 KiB via `spawn_thread()`
+  (o default de ~3 KiB do IDF não segura a VM Lua).
+- **`sdkconfig.defaults` NÃO aceita comentário no fim da linha de atribuição**
+  (`FOO=1  # bla` invalida o valor e o símbolo cai no default, em silêncio).
+  Comentários só em linha própria. Já causou stack de 3584 B no lugar de
+  32768 B e `Stack protection fault` no boot.

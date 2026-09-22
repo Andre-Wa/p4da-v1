@@ -24,6 +24,7 @@ idf_component_register(
         lua
         esp_pm
         esp_timer
+        pthread
 )
 
 # CMP0116: sem isso o Ninja acha para sempre que o .cpp gerado a partir do
