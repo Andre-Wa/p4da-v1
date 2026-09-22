@@ -23,12 +23,12 @@
 #include "esp_vfs_fat.h"
 #include "driver/sdmmc_host.h"
 #include "sdmmc_cmd.h"
-#include "sdmmc_defs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <errno.h>
 
 static const char *TAG = "storage";
@@ -199,7 +199,7 @@ void storage_sd_describe(char *out, size_t out_sz)
     }
     /* capacidade em setores de 512 bytes */
     uint64_t bytes = (uint64_t)s_card->csd.capacity * (uint64_t)s_card->csd.sector_size;
-    const char *kind = (s_card->ocr & SD_OCR_SDHC_CAP) ? "SDHC/SDXC" : "SD";
+    const char *kind = s_card->is_mmc ? "eMMC" : "SD";
     if (bytes >= 1024ULL * 1024ULL * 1024ULL) {
         snprintf(out, out_sz, "%s %.1f GB", kind,
                  (double)bytes / (1024.0 * 1024.0 * 1024.0));

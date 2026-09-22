@@ -1,27 +1,36 @@
 dependencies:
+  # PINNED de propósito: o conjunto abaixo é o que compilou/validou contra
+  # ESP-IDF v5.5.1 neste projeto. Ranges (^) deixam o resolve saltar de
+  # minor sem aviso — foi exatamente assim que Lua 5.5 e Slint 1.18
+  # entraram e quebraram o build nas primeiras rodadas.
+  # Ao atualizar qualquer um, atualize docs/DEPENDENCIAS.md.
   idf:
-    version: ">=5.3,<6.0"   # PINNED: ver docs/HARDWARE.md (chip ES rev v1.3)
+    version: ">=5.3,<6.0"   # IDF 6.x recusa P4 rev <3.1 (chip ES) — ver docs/HARDWARE.md
 
-  # Driver do painel ST7701S via MIPI-DSI (série 1.x p/ IDF 5.x).
+  # Driver do painel ST7701S via MIPI-DSI (série 1.x; a 2.x exige IDF 6.0+).
   espressif/esp_lcd_st7701:
-    version: "^1.1.5"
+    version: "==1.1.5"
 
   # Driver do touch GT911 (I2C).
   espressif/esp_lcd_touch_gt911:
-    version: "^1.1.3"
+    version: "==1.2.1"
+
+  # Base do touch (transitiva do gt911 e do Slint); pinada p/ congelar.
+  espressif/esp_lcd_touch:
+    version: "==1.2.1"
 
   # Driver USB Host HID (teclado).
   espressif/usb_host_hid:
-    version: "^1.0.0"
+    version: "==1.2.1"
 
-  # UI toolkit (mesma versão validada no protótipo).
+  # UI toolkit (prebuilt riscv32 p/ ESP-IDF).
   slint/slint:
-    version: "^1.12.1"
+    version: "==1.18.1"
 
   # Sistema de arquivos interno.
   joltwallet/littlefs:
-    version: "^1.14.8"
+    version: "==1.22.3"
 
   # Lua 5.5 oficial da Espressif (scripts + config do sistema).
   espressif/lua:
-    version: "^5.5.0"
+    version: "==5.5.0"

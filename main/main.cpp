@@ -21,8 +21,6 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
-#include <private/slint_size.h>
-
 #include <vector>
 #include <string>
 #include <mutex>
@@ -389,6 +387,7 @@ extern "C" void app_main(void)
         .buffer1 = framebuffer,
         .rotation = slint::platform::SoftwareRenderer::RenderingRotation::Rotate90,
         .byte_swap = false,
+        .panel_type = SlintDisplayPanelType::MipiDsiDpi,
     });
 
     auto ui = AppWindow::create();

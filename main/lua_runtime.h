@@ -11,9 +11,9 @@ extern "C" {
  * Runtime Lua do PDA (componente oficial espressif/lua, Lua 5.5).
  *
  * Um lua_State persistente executa os "pequenos programas" do usuário
- * (/pda/scripts/*.lua). A configuração do sistema (/pda/config/system.lua)
- * é parseada separadamente pela pda_config (estado temporário), então um
- * script quebrado nunca corrompe as settings.
+ * (arquivos .lua em pda/scripts/). A configuração do sistema
+ * (pda/config/system.lua) é parseada separadamente pela pda_config
+ * (estado temporário), então um script quebrado nunca corrompe as settings.
  *
  * Proteções: limite de instruções por execução (loops infinitos), limite
  * de memória alocada pela VM e erros sempre capturados (lua_pcall) e

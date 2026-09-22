@@ -1,4 +1,4 @@
-// app_ui.slint — UI do PDA (800x480 paisagem)
+// app_ui.slint - UI do PDA (800x480 paisagem)
 // Roteador de telas + status bar. Milestone M1.
 import { ListView, Slider, CheckBox } from "std-widgets.slint";
 
@@ -61,7 +61,7 @@ component LauncherScreen inherits Rectangle {
         spacing: 14px;
 
         Text {
-            text: "PDA — Menu Principal";
+            text: "PDA - Menu Principal";
             font-size: 26px;
             font-weight: 700;
             color: white;
@@ -118,8 +118,8 @@ component FileManagerScreen inherits Rectangle {
                 horizontal-stretch: 1;
                 overflow: elide;
             }
-            SmallButton { width: 70px; height: 36px; text: "↻"; clicked => { root.refresh(); } }
-            SmallButton { width: 70px; height: 36px; text: "↑"; clicked => { root.go-up(); } }
+            SmallButton { width: 70px; height: 36px; text: "Att"; clicked => { root.refresh(); } }
+            SmallButton { width: 70px; height: 36px; text: "Sobe"; clicked => { root.go-up(); } }
             SmallButton { width: 90px; height: 36px; text: "Voltar"; tint: #d9534f; clicked => { root.go-back(); } }
         }
 
@@ -136,7 +136,7 @@ component FileManagerScreen inherits Rectangle {
                         background: parent.pressed ? #2a3140 : transparent;
                         Text {
                             x: 12px;
-                            text: root.entries-is-dir[i] ? "📁 " + entry : "     " + entry;
+                            text: root.entries-is-dir[i] ? "> " + entry : "    " + entry;
                             color: root.entries-is-dir[i] ? #9fe3a0 : #cfe3ff;
                             font-size: 18px;
                             vertical-alignment: center;
@@ -218,12 +218,12 @@ component NoteEditScreen inherits Rectangle {
             vertical-stretch: 1;
 
             Flickable {
-                viewport-height: content-text.height;
+                content-height: content-text.height;
                 content-text := Text {
                     x: 12px;
                     y: 10px;
                     width: parent.width - 24px;
-                    text: root.note-buffer + "▏";
+                    text: root.note-buffer + "|";
                     color: white;
                     font-size: 17px;
                     wrap: word-wrap;
@@ -233,8 +233,8 @@ component NoteEditScreen inherits Rectangle {
 
         Text {
             text: root.has-keyboard
-                ? "Teclado USB ativo — Salvar grava em " + "notas/"
-                : "Sem teclado USB detectado — teclado virtual chega no M2 (docs/ROADMAP.md)";
+                ? "Teclado USB ativo - Salvar grava em " + "notas/"
+                : "Sem teclado USB detectado - teclado virtual chega no M2 (docs/ROADMAP.md)";
             font-size: 13px;
             color: #6b7688;
             horizontal-alignment: center;
@@ -262,7 +262,7 @@ component ScriptsScreen inherits Rectangle {
                 spacing: 8px;
                 Text { text: "Scripts"; font-size: 22px; font-weight: 700; color: white;
                        vertical-alignment: center; horizontal-stretch: 1; }
-                SmallButton { width: 44px; height: 34px; text: "↻"; clicked => { root.refresh(); } }
+                SmallButton { width: 44px; height: 34px; text: "Att"; clicked => { root.refresh(); } }
             }
             Rectangle {
                 background: #1d2330;

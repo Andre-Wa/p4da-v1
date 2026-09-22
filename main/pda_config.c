@@ -32,8 +32,8 @@ static void apply_defaults(pda_settings_t *s)
     s->screen_off_after_s = 120;
     s->deep_sleep_after_s = 600;
     s->wake_on_touch = false;
-    snprintf(s->timezone, sizeof(s->timezone), "%s", "America/Sao_Paulo");
-    snprintf(s->ntp_server, sizeof(s->ntp_server), "%s", "pool.ntp.org");
+    strlcpy(s->timezone, "America/Sao_Paulo", sizeof(s->timezone));
+    strlcpy(s->ntp_server, "pool.ntp.org", sizeof(s->ntp_server));
     s->onscreen_keyboard_auto = true;
 }
 
@@ -56,14 +56,15 @@ static bool tbl_bool(lua_State *L, int idx, const char *name, bool def)
 
 static void tbl_str(lua_State *L, int idx, const char *name, char *out, size_t sz, const char *def)
 {
-    /* cópia do default: out e def podem apontar para o mesmo buffer */
+    /* strlcpy: nunca dispara -Wformat-truncation e sempre termina em NUL.
+     * Cópia do default antes: out e def podem apontar p/ o mesmo buffer. */
     char defcopy[128];
-    snprintf(defcopy, sizeof(defcopy), "%s", def ? def : "");
+    strlcpy(defcopy, def ? def : "", sizeof(defcopy));
     lua_getfield(L, idx, name);
     if (lua_isstring(L, -1)) {
-        snprintf(out, sz, "%s", lua_tostring(L, -1));
+        strlcpy(out, lua_tostring(L, -1), sz);
     } else {
-        snprintf(out, sz, "%s", defcopy);
+        strlcpy(out, defcopy, sz);
     }
     lua_pop(L, 1);
 }
@@ -249,8 +250,8 @@ bool pda_settings_get(const char *key, double *out_num, bool *out_bool,
     if (!strcmp(key, "power.deep_sleep_after_s")) { if (out_num) *out_num = s_cfg.deep_sleep_after_s; return true; }
     if (!strcmp(key, "power.wake_on_touch")) { if (out_bool) *out_bool = s_cfg.wake_on_touch; return true; }
     if (!strcmp(key, "ui.onscreen_keyboard_auto")) { if (out_bool) *out_bool = s_cfg.onscreen_keyboard_auto; return true; }
-    if (!strcmp(key, "locale.timezone")) { if (out_str) snprintf(out_str, str_sz, "%s", s_cfg.timezone); return true; }
-    if (!strcmp(key, "locale.ntp_server")) { if (out_str) snprintf(out_str, str_sz, "%s", s_cfg.ntp_server); return true; }
+    if (!strcmp(key, "locale.timezone")) { if (out_str) strlcpy(out_str, s_cfg.timezone, str_sz); return true; }
+    if (!strcmp(key, "locale.ntp_server")) { if (out_str) strlcpy(out_str, s_cfg.ntp_server, str_sz); return true; }
     return false;
 }
 
@@ -263,8 +264,8 @@ bool pda_settings_set(const char *key, double num, bool is_bool, bool bool_val, 
     else if (!strcmp(key, "power.deep_sleep_after_s")) { s_cfg.deep_sleep_after_s = (int)num; }
     else if (!strcmp(key, "power.wake_on_touch")) { s_cfg.wake_on_touch = is_bool ? bool_val : (num != 0); }
     else if (!strcmp(key, "ui.onscreen_keyboard_auto")) { s_cfg.onscreen_keyboard_auto = is_bool ? bool_val : (num != 0); }
-    else if (!strcmp(key, "locale.timezone")) { if (!str) return false; snprintf(s_cfg.timezone, sizeof(s_cfg.timezone), "%s", str); }
-    else if (!strcmp(key, "locale.ntp_server")) { if (!str) return false; snprintf(s_cfg.ntp_server, sizeof(s_cfg.ntp_server), "%s", str); }
+    else if (!strcmp(key, "locale.timezone")) { if (!str) return false; strlcpy(s_cfg.timezone, str, sizeof(s_cfg.timezone)); }
+    else if (!strcmp(key, "locale.ntp_server")) { if (!str) return false; strlcpy(s_cfg.ntp_server, str, sizeof(s_cfg.ntp_server)); }
     else return false;
     clamp_all(&s_cfg);
     s_dirty = true;

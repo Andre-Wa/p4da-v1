@@ -13,6 +13,7 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 
 #include "lua.h"
 #include "lualib.h"
@@ -74,8 +75,9 @@ static int resolve_path(lua_State *L, const char *in, char *out, size_t sz)
         return luaL_error(L, "caminho invalido (.. nao permitido): %s", in ? in : "(nil)");
     }
     if (strncmp(in, "/sdcard/", 8) == 0 || strncmp(in, "/internal/", 10) == 0) {
-        if (snprintf(out, sz, "%s", in) >= (int)sz)
+        if (strlen(in) >= sz)
             return luaL_error(L, "caminho longo demais");
+        strlcpy(out, in, sz);
         return 0;
     }
     if (pda_path(out, sz, in) != ESP_OK)
@@ -241,7 +243,9 @@ static int l_fs_list(lua_State *L)
     struct dirent *ent;
     while ((ent = readdir(d)) != NULL) {
         if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
-        char full[224];
+        /* 480 >= 191 (path) + 1 ('/') + 255 (d_name) + NUL: o GCC prova que
+         * não trunca e o -Wformat-truncation fica quieto. */
+        char full[480];
         snprintf(full, sizeof(full), "%s/%s", path, ent->d_name);
         bool isdir = storage_is_dir(full);
         lua_pushinteger(L, i++);
@@ -295,7 +299,9 @@ static const luaL_Reg s_pda[] = {
 esp_err_t lua_runtime_init(void)
 {
     if (s_L) return ESP_OK;
-    s_L = lua_newstate(l_alloc, NULL);
+    /* Lua 5.5: lua_newstate() ganhou 3o param (seed p/ hash de
+     * strings). Alimentamos com entropy do RNG do chip. */
+    s_L = lua_newstate(l_alloc, NULL, (unsigned)esp_random());
     if (!s_L) {
         ESP_LOGE(TAG, "sem memoria p/ VM Lua");
         return ESP_ERR_NO_MEM;
@@ -311,7 +317,7 @@ esp_err_t lua_runtime_init(void)
     lua_setglobal(s_L, "pda");
 
     ESP_LOGI(TAG, "VM Lua pronta (Lua %s), teto %d KB",
-             LUA_VERSION_STRING, PDA_LUA_MEM_LIMIT_BYTES / 1024);
+             LUA_RELEASE, PDA_LUA_MEM_LIMIT_BYTES / 1024);
     return ESP_OK;
 }
 

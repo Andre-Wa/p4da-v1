@@ -81,3 +81,25 @@ p4da/
     ├── main.cpp               # orquestração (threads + event loop)
     └── ui/app_ui.slint        # status bar + 6 telas
 ```
+
+## Notas de build (IDF 5.5.1, testado)
+
+- **Componente `esp_timer`** é obrigatório no `REQUIRES` (usamos
+  `esp_timer_get_time()` p/ idle/uptime) — no IDF 5.5 ele não vem mais
+  embutido em `esp_system`.
+- **Slint resolve para 1.18.x** (prebuilt `Slint-cpp-1.18.1-riscv32imafc-esp-espidf`),
+  não 1.12: a API de `slint-esp.h` que usamos é compatível e agora setamos
+  `panel_type = MipiDsiDpi` explicitamente (o P4 tem RGB e DSI; `Auto` já
+  escolheria DSI, mas explícito evita surpresa).
+- `-Werror=all` do IDF pega pegadinhas que evitamos de propósito:
+  `/*` dentro de comentário (`-Wcomment`), truncamento de `snprintf`
+  (`-Wformat-truncation`) → usamos `strlcpy` nas cópias de string.
+- Se o build reclamar de componente velho: `rm -rf build managed_components
+  dependencies.lock sdkconfig` e reconstrua.
+
+### Gotcha do Slint 1.18: glifos de fallback incham a flash
+O slint-compiler embute os glifos dos caracteres que aparecem no `.slint`.
+Caracteres fora da fonte default (emoji `📁`, símbolos `↻ ↑ ▏ —`) disparam
+**font fallback** com glifos de centenas de KiB até MiB cada — vimos
+`.rodata` de 33,7 MiB e `elf2image` estourar o limite de 16 MB.
+**Regra: UI em ASCII + Latin-1 (acentos PT-BR ok).** Sem emoji no `.slint`.
