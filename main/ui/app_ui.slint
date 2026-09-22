@@ -1,0 +1,528 @@
+// app_ui.slint — UI do PDA (800x480 paisagem)
+// Roteador de telas + status bar. Milestone M1.
+import { ListView, Slider, CheckBox } from "std-widgets.slint";
+
+export enum AppState {
+    Launcher,
+    FileManager,
+    NotesList,
+    NoteEdit,
+    Scripts,
+    Settings,
+}
+
+// ---------------------------------------------------------------- botões
+component AppButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked;
+
+    border-radius: 12px;
+    background: !root.enabled ? #171b24 : (touch-area.pressed ? #2a3140 : #1d2330);
+    border-width: 1px;
+    border-color: !root.enabled ? #232833 : (touch-area.pressed ? #4a90d9 : #333c4d);
+
+    Text {
+        text: root.text;
+        font-size: 20px;
+        color: root.enabled ? white : #4a5261;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch-area := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component SmallButton inherits Rectangle {
+    in property <string> text;
+    in property <color> tint: #4a90d9;
+    callback clicked;
+    border-radius: 8px;
+    background: touch-area.pressed ? #2d6a9f : root.tint;
+    Text {
+        text: root.text;
+        color: white;
+        font-size: 15px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch-area := TouchArea { clicked => { root.clicked(); } }
+}
+
+// ---------------------------------------------------------------- launcher
+component LauncherScreen inherits Rectangle {
+    callback open-app(string);
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 14px;
+
+        Text {
+            text: "PDA — Menu Principal";
+            font-size: 26px;
+            font-weight: 700;
+            color: white;
+            horizontal-alignment: center;
+        }
+
+        GridLayout {
+            spacing: 12px;
+            Row {
+                AppButton { text: "Notas"; clicked => { root.open-app("Notas"); } }
+                AppButton { text: "Arquivos"; clicked => { root.open-app("Arquivos"); } }
+                AppButton { text: "Scripts"; clicked => { root.open-app("Scripts"); } }
+                AppButton { text: "Config"; clicked => { root.open-app("Config"); } }
+            }
+            Row {
+                AppButton { text: "Música"; enabled: false; clicked => { root.open-app("Musica"); } }
+                AppButton { text: "Agenda"; enabled: false; clicked => { root.open-app("Agenda"); } }
+                AppButton { text: "Contatos"; enabled: false; clicked => { root.open-app("Contatos"); } }
+                AppButton { text: "Relógio"; enabled: false; clicked => { root.open-app("Relogio"); } }
+            }
+        }
+
+        Text {
+            text: "Cinza = chega nas próximas fases (ver docs/ROADMAP.md)";
+            font-size: 13px;
+            color: #6b7688;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// ---------------------------------------------------------------- arquivos
+component FileManagerScreen inherits Rectangle {
+    in property <[string]> entries;
+    in property <[bool]> entries-is-dir;
+    in property <string> current-path;
+    callback open-entry(string);
+    callback request-dir(string);
+    callback go-up();
+    callback go-back();
+    callback refresh();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            Text {
+                text: root.current-path;
+                font-size: 17px;
+                color: #7fdbff;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            SmallButton { width: 70px; height: 36px; text: "↻"; clicked => { root.refresh(); } }
+            SmallButton { width: 70px; height: 36px; text: "↑"; clicked => { root.go-up(); } }
+            SmallButton { width: 90px; height: 36px; text: "Voltar"; tint: #d9534f; clicked => { root.go-back(); } }
+        }
+
+        Rectangle {
+            background: #1d2330;
+            border-radius: 8px;
+            vertical-stretch: 1;
+
+            ListView {
+                for entry[i] in root.entries: TouchArea {
+                    height: 42px;
+                    clicked => { root.open-entry(entry); }
+                    Rectangle {
+                        background: parent.pressed ? #2a3140 : transparent;
+                        Text {
+                            x: 12px;
+                            text: root.entries-is-dir[i] ? "📁 " + entry : "     " + entry;
+                            color: root.entries-is-dir[i] ? #9fe3a0 : #cfe3ff;
+                            font-size: 18px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: #333c4d; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- notas
+component NotesListScreen inherits Rectangle {
+    in property <[string]> notes;
+    callback go-back();
+    callback open-note(string);
+    callback new-note();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            Text { text: "Notas"; font-size: 24px; font-weight: 700; color: white;
+                   vertical-alignment: center; horizontal-stretch: 1; }
+            SmallButton { width: 120px; height: 38px; text: "+ Nova nota"; clicked => { root.new-note(); } }
+            SmallButton { width: 90px; height: 38px; text: "Voltar"; tint: #d9534f; clicked => { root.go-back(); } }
+        }
+
+        Rectangle {
+            background: #1d2330;
+            border-radius: 8px;
+            vertical-stretch: 1;
+            ListView {
+                for note in root.notes: TouchArea {
+                    height: 44px;
+                    clicked => { root.open-note(note); }
+                    Rectangle {
+                        background: parent.pressed ? #2a3140 : transparent;
+                        Text { x: 12px; text: note; color: #7fdbff; font-size: 18px; vertical-alignment: center; }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: #333c4d; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component NoteEditScreen inherits Rectangle {
+    in property <string> note-name;
+    in property <string> note-buffer;
+    in property <bool> is-new;
+    in property <bool> has-keyboard;
+    callback save-note();
+    callback delete-note();
+    callback go-back();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            Text { text: root.note-name; font-size: 22px; font-weight: 700; color: white;
+                   vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            SmallButton { width: 90px; height: 36px; text: "Salvar"; clicked => { root.save-note(); } }
+            if !root.is-new: SmallButton { width: 90px; height: 36px; text: "Apagar"; tint: #d9534f; clicked => { root.delete-note(); } }
+            SmallButton { width: 90px; height: 36px; text: "Voltar"; tint: #4d5566; clicked => { root.go-back(); } }
+        }
+
+        Rectangle {
+            background: #1d2330;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #333c4d;
+            vertical-stretch: 1;
+
+            Flickable {
+                viewport-height: content-text.height;
+                content-text := Text {
+                    x: 12px;
+                    y: 10px;
+                    width: parent.width - 24px;
+                    text: root.note-buffer + "▏";
+                    color: white;
+                    font-size: 17px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        Text {
+            text: root.has-keyboard
+                ? "Teclado USB ativo — Salvar grava em " + "notas/"
+                : "Sem teclado USB detectado — teclado virtual chega no M2 (docs/ROADMAP.md)";
+            font-size: 13px;
+            color: #6b7688;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// ---------------------------------------------------------------- scripts
+component ScriptsScreen inherits Rectangle {
+    in property <[string]> scripts;
+    in property <[string]> log;
+    callback run-script(string);
+    callback clear-log();
+    callback refresh();
+    callback go-back();
+
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 14px;
+
+        VerticalLayout {
+            width: 260px;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Scripts"; font-size: 22px; font-weight: 700; color: white;
+                       vertical-alignment: center; horizontal-stretch: 1; }
+                SmallButton { width: 44px; height: 34px; text: "↻"; clicked => { root.refresh(); } }
+            }
+            Rectangle {
+                background: #1d2330;
+                border-radius: 8px;
+                vertical-stretch: 1;
+                ListView {
+                    for s in root.scripts: TouchArea {
+                        height: 40px;
+                        clicked => { root.run-script(s); }
+                        Rectangle {
+                            background: parent.pressed ? #2a3140 : transparent;
+                            Text { x: 10px; text: s; color: #9fe3a0; font-size: 16px; vertical-alignment: center; }
+                            Rectangle { y: parent.height - 1px; height: 1px; background: #333c4d; }
+                        }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Console"; font-size: 18px; color: white; vertical-alignment: center;
+                       horizontal-stretch: 1; }
+                SmallButton { width: 90px; height: 34px; text: "Limpar"; tint: #4d5566; clicked => { root.clear-log(); } }
+                SmallButton { width: 90px; height: 34px; text: "Voltar"; tint: #d9534f; clicked => { root.go-back(); } }
+            }
+            Rectangle {
+                background: #10141b;
+                border-radius: 8px;
+                vertical-stretch: 1;
+                ListView {
+                    for line in root.log: Text {
+                        height: 22px;
+                        x: 8px;
+                        text: line;
+                        color: #d0d6e2;
+                        font-size: 14px;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- config
+component SettingsScreen inherits Rectangle {
+    in-out property <float> brightness: 80;
+    in-out property <float> dim-s: 30;
+    in-out property <float> off-s: 120;
+    in-out property <float> deep-s: 0;
+    in-out property <bool> wake-touch: false;
+    in-out property <bool> osk-auto: true;
+    in property <string> store-info;
+    in property <string> battery-info;
+    callback save();
+    callback reset();
+    callback sleep-now();
+    callback hibernate();
+    callback go-back();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            Text { text: "Configurações"; font-size: 24px; font-weight: 700; color: white;
+                   vertical-alignment: center; horizontal-stretch: 1; }
+            SmallButton { width: 100px; height: 38px; text: "Salvar"; clicked => { root.save(); } }
+            SmallButton { width: 90px; height: 38px; text: "Voltar"; tint: #d9534f; clicked => { root.go-back(); } }
+        }
+
+        GridLayout {
+            spacing: 10px;
+            Row {
+                Text { text: "Brilho: " + root.brightness; color: #cfe3ff; font-size: 16px; vertical-alignment: center; }
+                Slider { minimum: 0; maximum: 100; value <=> root.brightness; horizontal-stretch: 1; }
+            }
+            Row {
+                Text { text: "Dimerizar após (s): " + root.dim-s; color: #cfe3ff; font-size: 16px; vertical-alignment: center; }
+                Slider { minimum: 5; maximum: 600; value <=> root.dim-s; horizontal-stretch: 1; }
+            }
+            Row {
+                Text { text: "Standby após (s): " + root.off-s; color: #cfe3ff; font-size: 16px; vertical-alignment: center; }
+                Slider { minimum: 10; maximum: 1800; value <=> root.off-s; horizontal-stretch: 1; }
+            }
+            Row {
+                Text { text: "Hibernar após (s, 0=off): " + root.deep-s; color: #cfe3ff; font-size: 16px; vertical-alignment: center; }
+                Slider { minimum: 0; maximum: 7200; value <=> root.deep-s; horizontal-stretch: 1; }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 24px;
+            CheckBox { text: "Acordar por toque (HW?)"; checked <=> root.wake-touch; }
+            CheckBox { text: "Teclado virtual só sem USB"; checked <=> root.osk-auto; }
+        }
+
+        HorizontalLayout {
+            spacing: 10px;
+            Text { text: "Armazenamento: " + root.store-info + "   Bateria: " + root.battery-info;
+                   font-size: 14px; color: #6b7688; vertical-alignment: center; horizontal-stretch: 1; }
+            SmallButton { width: 110px; height: 36px; text: "Dormir agora"; tint: #4d5566; clicked => { root.sleep-now(); } }
+            SmallButton { width: 100px; height: 36px; text: "Hibernar"; tint: #8B0000; clicked => { root.hibernate(); } }
+            SmallButton { width: 90px; height: 36px; text: "Padrão"; tint: #4d5566; clicked => { root.reset(); } }
+        }
+
+        Text {
+            text: "Salvar grava em config/system.lua (cartão SD quando presente). Hibernar = desligar com sessão restaurada no próximo boot.";
+            font-size: 12px;
+            color: #6b7688;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// ---------------------------------------------------------------- janela
+export component AppWindow inherits Window {
+    width: 800px;
+    height: 480px;
+    background: #14181f;
+
+    in-out property <AppState> active-app: AppState.Launcher;
+
+    // status bar
+    in property <string> status-clock: "--:--";
+    in property <string> status-store: "...";
+    in property <string> status-batt: "--";
+    in property <string> status-pwr: "";
+    callback tick();   // disparado 1x/s por um Timer interno
+
+    // arquivos
+    in property <[string]> file-entries;
+    in property <[bool]> file-is-dir;
+    in property <string> file-path: "";
+    callback request-dir(string);
+    callback dir-up();
+
+    // notas
+    in property <[string]> notes-list;
+    callback request-notes-list();
+    in-out property <string> note-name: "";
+    in-out property <string> note-buffer: "";
+    in-out property <bool> note-is-new: false;
+    in property <bool> has-keyboard: false;
+    callback open-note(string);
+    callback new-note();
+    callback save-note();
+    callback delete-note();
+
+    // scripts
+    in property <[string]> scripts-list;
+    in property <[string]> script-log;
+    callback request-scripts();
+    callback run-script(string);
+    callback clear-script-log();
+
+    // config
+    in-out property <float> cfg-brightness: 80;
+    in-out property <float> cfg-dim-s: 30;
+    in-out property <float> cfg-off-s: 120;
+    in-out property <float> cfg-deep-s: 0;
+    in-out property <bool> cfg-wake-touch: false;
+    in-out property <bool> cfg-osk-auto: true;
+    in property <string> cfg-store-info: "";
+    in property <string> cfg-batt-info: "";
+    callback cfg-save();
+    callback cfg-reset();
+    callback cfg-sleep-now();
+    callback cfg-hibernate();
+
+    Timer {
+        interval: 1000ms;
+        running: true;
+        triggered => { root.tick(); }
+    }
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // ---- status bar ----
+        Rectangle {
+            height: 30px;
+            background: #0d1016;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 18px;
+                Text { text: root.status-clock; color: #7fdbff; font-size: 14px; vertical-alignment: center; }
+                Text { text: root.status-store; color: #9fe3a0; font-size: 14px; vertical-alignment: center; }
+                Text { text: "bat: " + root.status-batt; color: #e3c79f; font-size: 14px; vertical-alignment: center; }
+                Text { text: root.status-pwr; color: #6b7688; font-size: 14px; vertical-alignment: center;
+                       horizontal-stretch: 1; horizontal-alignment: right; }
+            }
+        }
+
+        // ---- conteúdo ----
+        Rectangle {
+            vertical-stretch: 1;
+            background: #14181f;
+
+            if (root.active-app == AppState.Launcher) : LauncherScreen {
+                open-app(app-name) => { root.open-app-dispatch(app-name); }
+            }
+            if (root.active-app == AppState.FileManager) : FileManagerScreen {
+                entries: root.file-entries;
+                entries-is-dir: root.file-is-dir;
+                current-path: root.file-path;
+                request-dir(p) => { root.request-dir(p); }
+                open-entry(e) => { root.request-dir(e); }
+                go-up => { root.dir-up(); }
+                refresh => { root.request-dir(root.file-path); }
+                go-back => { root.active-app = AppState.Launcher; }
+            }
+            if (root.active-app == AppState.NotesList) : NotesListScreen {
+                notes: root.notes-list;
+                go-back => { root.active-app = AppState.Launcher; }
+                open-note(n) => { root.open-note(n); }
+                new-note => { root.new-note(); }
+            }
+            if (root.active-app == AppState.NoteEdit) : NoteEditScreen {
+                note-name: root.note-name;
+                note-buffer: root.note-buffer;
+                is-new: root.note-is-new;
+                has-keyboard: root.has-keyboard;
+                save-note => { root.save-note(); }
+                delete-note => { root.delete-note(); }
+                go-back => { root.active-app = AppState.NotesList; root.request-notes-list(); }
+            }
+            if (root.active-app == AppState.Scripts) : ScriptsScreen {
+                scripts: root.scripts-list;
+                log: root.script-log;
+                run-script(s) => { root.run-script(s); }
+                clear-log => { root.clear-script-log(); }
+                refresh => { root.request-scripts(); }
+                go-back => { root.active-app = AppState.Launcher; }
+            }
+            if (root.active-app == AppState.Settings) : SettingsScreen {
+                brightness <=> root.cfg-brightness;
+                dim-s <=> root.cfg-dim-s;
+                off-s <=> root.cfg-off-s;
+                deep-s <=> root.cfg-deep-s;
+                wake-touch <=> root.cfg-wake-touch;
+                osk-auto <=> root.cfg-osk-auto;
+                store-info: root.cfg-store-info;
+                battery-info: root.cfg-batt-info;
+                save => { root.cfg-save(); }
+                reset => { root.cfg-reset(); }
+                sleep-now => { root.cfg-sleep-now(); }
+                hibernate => { root.cfg-hibernate(); }
+                go-back => { root.active-app = AppState.Launcher; }
+            }
+        }
+    }
+
+    // dispatch interno do launcher (mantém o C++ como fonte da verdade)
+    callback open-app-dispatch(string);
+}
