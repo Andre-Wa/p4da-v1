@@ -387,7 +387,6 @@ extern "C" void app_main(void)
         .buffer1 = framebuffer,
         .rotation = slint::platform::SoftwareRenderer::RenderingRotation::Rotate90,
         .byte_swap = false,
-        .panel_type = SlintDisplayPanelType::MipiDsiDpi,
     });
 
     auto ui = AppWindow::create();

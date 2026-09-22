@@ -103,3 +103,6 @@ Caracteres fora da fonte default (emoji `📁`, símbolos `↻ ↑ ▏ —`) dis
 **font fallback** com glifos de centenas de KiB até MiB cada — vimos
 `.rodata` de 33,7 MiB e `elf2image` estourar o limite de 16 MB.
 **Regra: UI em ASCII + Latin-1 (acentos PT-BR ok).** Sem emoji no `.slint`.
+No Slint **1.18.1** isso não foi suficiente (glifos inflados mesmo p/ ASCII,
+31,8 MiB de `.rodata`) — por isso o pin em **1.12.1**, ver
+`docs/DEPENDENCIAS.md`. Se um dia subirmos o Slint, meça `idf.py size` antes.

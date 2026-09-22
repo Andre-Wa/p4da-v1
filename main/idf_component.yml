@@ -24,8 +24,11 @@ dependencies:
     version: "==1.2.1"
 
   # UI toolkit (prebuilt riscv32 p/ ESP-IDF).
+  # PINNADO em 1.12.1 de propósito: o prebuilt 1.18.1 embute glifos de fonte
+  # ~20x maiores (31,8 MiB de .rodata num app de ~3 MiB) e estoura o flash
+  # de 16 MB. Ver docs/DEPENDENCIAS.md ("Regressão do Slint 1.18").
   slint/slint:
-    version: "==1.18.1"
+    version: "==1.12.1"
 
   # Sistema de arquivos interno.
   joltwallet/littlefs:

@@ -18,7 +18,7 @@ API dentro da mesma major** permitida pelos ranges `^`. Por isso o
 | `espressif/esp_lcd_touch_gt911` | `^1.1.3` | **1.2.1** | >= 5.0 | ✅ compila |
 | `espressif/esp_lcd_touch` (transitiva) | — | **1.2.1** | >= 5.0 | ✅ (warning de deprecação vem do Slint, não nosso) |
 | `espressif/usb_host_hid` | `^1.0.0` | **1.2.1** | >= 5.0 (+ `espressif/usb ^1.0.0`, satisfeito pelo `usb` do próprio IDF 5.5) | ✅ compila (warnings de campos novos em `usb_host_config_t`, inofensivos) |
-| `slint/slint` | `^1.12.1` | **1.18.1** | **>= 5.1** | ✅ compila (prebuilt `Slint-cpp-1.18.1-riscv32imafc-esp-espidf`); link = próxima validação |
+| `slint/slint` | `^1.12.1` | 1.18.1 → **rebaixado p/ 1.12.1** | >= 5.1 | ⛔ 1.18.1: regressão de fontes (abaixo); ✅ 1.12.1 é a versão provada no protótipo |
 | `joltwallet/littlefs` | `^1.14.8` | **1.22.3** | >= 5.0 | ✅ compila (nossos campos de `esp_vfs_littlefs_conf_t` existem nessa versão) |
 | `espressif/lua` | `^5.5.0` | **5.5.0** | >= 5.0 | ✅ compila (API 5.5: `lua_newstate` c/ seed, `LUA_RELEASE`) |
 
@@ -43,6 +43,24 @@ API dentro da mesma major** permitida pelos ranges `^`. Por isso o
 5. **IDF 6.x**: não subir. Além do P4 engineering-sample (rev < 3.1 recusado),
    a série 2.x do `esp_lcd_st7701` e outras APIs mudam junto. O teto
    `idf: ">=5.3,<6.0"` no `idf_component.yml` protege o resolve.
+
+## Regressão do Slint 1.18.1 (motivo do pin em 1.12.1)
+
+Sintomas medidos neste projeto (IDF 5.5.1, esp32p4):
+
+| Build | External RAM `.rodata` | Total image | Desfecho |
+|---|---|---|---|
+| Slint 1.18.1, UI com emoji/símbolos | 35.370.148 B | 37.026.384 B | `elf2image`: > 16 MB |
+| Slint 1.18.1, UI ASCII+Latin-1 | 31.783.096 B | 33.436.960 B | `elf2image`: > 16 MB |
+| Slint 1.12.1 (protótipo, com emoji) | — | < 4 MiB | flashava e rodava |
+
+Os símbolos gigantes são `slint_embedded_resource_*_gs_0_gd_N` (glifos de
+fonte), com até 2,4 MiB **por glifo** numa UI cujas fontes são 13–26 px.
+Sanitizar os caracteres ajudou pouco (-3,6 MiB): o raster/embedding do
+1.18.1 infla glifos mesmo para ASCII. Como o 1.12.1 é a versão já validada
+neste hardware (protótipo), o pin desce para `==1.12.1` até segunda ordem.
+Consequências de API já aplicadas: `viewport-height` (não `content-height`)
+e `SlintPlatformConfiguration` sem `panel_type`.
 
 ## Regra de ouro do repositório
 
