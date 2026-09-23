@@ -1,9 +1,12 @@
 /**
- * main.cpp — PDA (milestone M1)
+ * main.cpp — PDA (milestone M2)
  *
  * Bring-up: storage -> config(Lua) -> display -> touch -> Slint -> lua VM
  * -> power mgmt. Toda I/O de disco roda em threads; a UI nunca bloqueia.
  * Scripts Lua rodam serializados por mutex (uma VM, uma execução por vez).
+ *
+ * M2: editor com cursor (teclado + toque + teclado virtual), abertura de
+ * qualquer arquivo texto pelo gerenciador, save de volta no mesmo caminho.
  */
 
 #include "slint-esp.h"
@@ -30,20 +33,32 @@
 #include <cstdlib>
 #include <cstring>
 #include <strings.h>
+#include <utility>
 #include <dirent.h>
 
 static const char *TAG = "main";
 
-static const AppWindow *g_ui = nullptr;  /* handle vive em app_main() */
+static const AppWindow *g_ui = nullptr;   /* handle vive em app_main() */
 static std::shared_ptr<slint::VectorModel<slint::SharedString>> g_script_log;
 static std::mutex g_lua_mtx;
-static std::string g_fm_dir;          /* diretório atual do gerenciador */
+static std::string g_fm_dir;
 static bool g_hid_seen = false;
-static std::string s_session_app = "launcher";  /* cache p/ session_save() */
+static std::string s_session_app = "launcher";
 static std::string s_session_note = "";
 
-/* ------------------------------------------------------------------ */
+/* geometria do editor (espelha app_ui.slint: line-h = 22) */
+static const int ED_LINE_H = 22;
+static const int ED_CHAR_W = 10;      /* largura média p/ 16px (aprox.) */
+static const int ED_STATUS_H = 30;
+static const int ED_HEADER_H = 42;
+static const int ED_OSK_H = 196;
+
 static void activity(void) { power_mgmt_activity(); }
+
+/* forward decls (ordem de definição vs uso) */
+static void refresh_notes_list(void);
+static void refresh_scripts_list(void);
+static void list_dir_async(const std::string dir);
 
 /** std::thread com pilha explícita: o default do IDF (~3K) estoura a VM Lua
  *  e é apertado p/ readdir+FATFS. Chamado NA task que cria a thread. */
@@ -65,7 +80,6 @@ static void log_line(const char *line, void *ctx)
     slint::invoke_from_event_loop([s]() {
         if (g_script_log) {
             g_script_log->push_back(slint::SharedString(s));
-            /* janela deslizante p/ não crescer sem limite */
             while (g_script_log->row_count() > 200) g_script_log->erase(0);
         }
     });
@@ -110,7 +124,291 @@ static void update_clock(void)
     g_ui->set_status_pwr(slint::SharedString(pwr));
 }
 
-/* ---------------- gerenciador de arquivos ------------------------- */
+/* ================================================================== */
+/* EDITOR                                                              */
+/* ================================================================== */
+struct EditorState {
+    std::string path;       /* caminho completo; "" = ainda sem arquivo */
+    std::string text;
+    size_t cursor = 0;
+    bool dirty = false;
+    bool is_new = false;
+    int osk_override = -1;     /* -1 auto, 0 força off, 1 força on */
+    bool osk_shift = false;
+};
+static EditorState g_ed;
+
+static std::string notes_dir(void)
+{
+    char buf[160];
+    pda_path(buf, sizeof(buf), "notes");
+    return std::string(buf);
+}
+
+static std::string ed_title(void)
+{
+    if (g_ed.path.empty()) return std::string("(novo)");
+    std::string root = pda_root();
+    if (g_ed.path.rfind(root + "/", 0) == 0) return g_ed.path.substr(root.size() + 1);
+    return g_ed.path;
+}
+
+static bool ed_osk_should_show(void)
+{
+    if (g_ed.osk_override >= 0) return g_ed.osk_override == 1;
+    return pda_settings()->onscreen_keyboard_auto && !usb_hid_keyboard_connected();
+}
+
+/* linhas de exibição = linhas reais com "|" injetado na coluna do cursor */
+static void ed_push_ui(bool scroll_to_cursor)
+{
+    auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
+    std::vector<std::string> lines;
+    int cursor_line = 0, cursor_col = 0;
+    {
+        size_t i = 0, line_idx = 0;
+        size_t line_start = 0;
+        for (; i <= g_ed.text.size(); i++) {
+            if (i == g_ed.text.size() || g_ed.text[i] == '\n') {
+                lines.push_back(g_ed.text.substr(line_start, i - line_start));
+                if (g_ed.cursor >= line_start && g_ed.cursor <= i) {
+                    cursor_line = (int)line_idx;
+                    cursor_col = (int)(g_ed.cursor - line_start);
+                }
+                line_idx++;
+                line_start = i + 1;
+            }
+        }
+    }
+    if (lines.empty()) lines.push_back("");
+
+    size_t maxw = 0;
+    for (size_t i = 0; i < lines.size(); i++) {
+        size_t w = lines[i].size() + ((int)i == cursor_line ? 1 : 0);
+        if (w > maxw) maxw = w;
+    }
+    for (size_t i = 0; i < lines.size(); i++) {
+        if ((int)i == cursor_line) {
+            std::string l = lines[i];
+            if ((size_t)cursor_col > l.size()) cursor_col = (int)l.size();
+            l.insert(l.begin() + cursor_col, '|');
+            model->push_back(slint::SharedString(l));
+        } else {
+            model->push_back(slint::SharedString(lines[i]));
+        }
+    }
+
+    g_ui->set_ed_lines(model);
+    g_ui->set_ed_line_count((int)lines.size());
+    g_ui->set_ed_content_w((float)(maxw * ED_CHAR_W + 60));
+    g_ui->set_ed_title(slint::SharedString(ed_title()));
+    g_ui->set_ed_dirty(g_ed.dirty);
+    g_ui->set_ed_can_delete(g_ed.path.rfind(notes_dir() + "/", 0) == 0);
+    g_ui->set_ed_show_osk(ed_osk_should_show());
+
+    if (scroll_to_cursor) {
+        int content_h = (int)lines.size() * ED_LINE_H + 40;
+        int area_h = 480 - ED_STATUS_H - ED_HEADER_H - 16 -
+                     (ed_osk_should_show() ? ED_OSK_H : 0);
+        int target = cursor_line * ED_LINE_H - area_h / 2;
+        if (target < 0) target = 0;
+        int maxy = content_h - area_h;
+        if (target > maxy) target = maxy > 0 ? maxy : 0;
+        g_ui->set_ed_scroll_y((float)target);
+    }
+}
+
+static void ed_insert_str(const char *s, size_t n)
+{
+    if (g_ed.cursor > g_ed.text.size()) g_ed.cursor = g_ed.text.size();
+    g_ed.text.insert(g_ed.cursor, s, n);
+    g_ed.cursor += n;
+    g_ed.dirty = true;
+    ed_push_ui(true);
+}
+
+static void ed_backspace(void)
+{
+    if (g_ed.cursor == 0 || g_ed.text.empty()) return;
+    g_ed.cursor--;
+    g_ed.text.erase(g_ed.cursor, 1);
+    g_ed.dirty = true;
+    ed_push_ui(true);
+}
+
+static void ed_delete_key(void)
+{
+    if (g_ed.cursor >= g_ed.text.size()) return;
+    g_ed.text.erase(g_ed.cursor, 1);
+    g_ed.dirty = true;
+    ed_push_ui(true);
+}
+
+static void ed_move(int dcol, int dline, bool home, bool end)
+{
+    /* reconstrói linha/coluna atuais */
+    size_t line_start = 0;
+    int line_idx = 0;
+    for (size_t i = 0; i < g_ed.cursor; i++) {
+        if (g_ed.text[i] == '\n') { line_start = i + 1; line_idx++; }
+    }
+    int col = (int)(g_ed.cursor - line_start);
+
+    if (home) { g_ed.cursor = line_start; ed_push_ui(true); return; }
+    if (end) {
+        size_t i = line_start;
+        while (i < g_ed.text.size() && g_ed.text[i] != '\n') i++;
+        g_ed.cursor = i;
+        ed_push_ui(true);
+        return;
+    }
+    if (dline != 0) {
+        /* acha a linha alvo e clamp a coluna nela */
+        int target = line_idx + dline;
+        size_t ls = 0;
+        int idx = 0;
+        std::vector<std::pair<size_t, size_t>> spans;   /* start, end(incl newline pos) */
+        size_t s0 = 0;
+        for (size_t i = 0; i <= g_ed.text.size(); i++) {
+            if (i == g_ed.text.size() || g_ed.text[i] == '\n') {
+                spans.push_back({ s0, i });
+                s0 = i + 1;
+            }
+        }
+        if (spans.empty()) spans.push_back({ 0, 0 });
+        if (target < 0) target = 0;
+        if (target >= (int)spans.size()) target = (int)spans.size() - 1;
+        size_t len = spans[target].second - spans[target].first;
+        size_t c = (size_t)col > len ? len : (size_t)col;
+        g_ed.cursor = spans[target].first + c;
+        (void)ls; (void)idx;
+        ed_push_ui(true);
+        return;
+    }
+    if (dcol > 0) {
+        if (g_ed.cursor < g_ed.text.size()) g_ed.cursor++;
+    } else if (dcol < 0) {
+        if (g_ed.cursor > 0) g_ed.cursor--;
+    }
+    ed_push_ui(true);
+}
+
+static void ed_load(const std::string &path, const std::string &content, bool is_new)
+{
+    g_ed.path = path;
+    g_ed.text = content;
+    g_ed.cursor = 0;
+    g_ed.dirty = false;
+    g_ed.is_new = is_new;
+    g_ed.osk_override = -1;
+    ed_push_ui(false);
+    g_ui->set_ed_scroll_y(0.f);
+    g_ui->set_active_app(AppState::Editor);
+    s_session_app = "noteedit";
+    s_session_note = is_new ? std::string("") : ed_title();
+}
+
+static void ed_open_path_async(const std::string path)
+{
+    spawn_thread("io_edit", 8192, [path]() {
+        char *data = NULL; size_t len = 0;
+        std::string content;
+        if (storage_read_file_alloc(path.c_str(), &data, &len) == ESP_OK) {
+            content.assign(data, len);
+            free(data);
+        } else {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "[erro] não abriu %s", path.c_str());
+            log_line(buf, NULL);
+            return;
+        }
+        slint::invoke_from_event_loop([path, content]() {
+            ed_load(path, content, false);
+        });
+    }).detach();
+}
+
+static void ed_save(void)
+{
+    if (g_ed.path.empty()) return;
+    if (storage_write_text_file(g_ed.path.c_str(), g_ed.text.data(), g_ed.text.size()) == ESP_OK) {
+        g_ed.dirty = false;
+        g_ed.is_new = false;
+        ESP_LOGI(TAG, "salvo: %s (%u bytes)", g_ed.path.c_str(), (unsigned)g_ed.text.size());
+        ed_push_ui(false);
+        if (g_ed.path.rfind(notes_dir() + "/", 0) == 0) refresh_notes_list();
+    } else {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "[erro] falha ao salvar %s", g_ed.path.c_str());
+        log_line(buf, NULL);
+    }
+}
+
+/* ---------------- teclado virtual: modelos de linhas -------------- */
+static const char *s_osk_lower[] = {
+    "1 2 3 4 5 6 7 8 9 0",
+    "q w e r t y u i o p",
+    "a s d f g h j k l ç",
+    "z x c v b n m , . ;",
+};
+static const char *s_osk_upper[] = {
+    "1 2 3 4 5 6 7 8 9 0",
+    "Q W E R T Y U I O P",
+    "A S D F G H J K L Ç",
+    "Z X C V B N M , . ;",
+};
+
+static void ed_push_osk_rows(void)
+{
+    const char **src = g_ed.osk_shift ? s_osk_upper : s_osk_lower;
+    for (int r = 0; r < 4; r++) {
+        auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
+        const char *p = src[r];
+        std::string cur;
+        /* separa por espaço; cada "tecla" pode ter 1 char ou multibyte (ç) */
+        size_t i = 0;
+        std::string row(p);
+        cur.clear();
+        while (i <= row.size()) {
+            if (i == row.size() || row[i] == ' ') {
+                if (!cur.empty()) { model->push_back(slint::SharedString(cur)); cur.clear(); }
+                i++;
+            } else {
+                /* copia um codepoint UTF-8 inteiro */
+                unsigned char c = (unsigned char)row[i];
+                int extra = (c < 0x80) ? 0 : (c < 0xE0) ? 1 : (c < 0xF0) ? 2 : 3;
+                cur.push_back(row[i]);
+                for (int k = 0; k < extra && i + 1 < row.size(); k++) { i++; cur.push_back(row[i]); }
+                i++;
+            }
+        }
+        if (r == 0) g_ui->set_ed_osk_r0(model);
+        else if (r == 1) g_ui->set_ed_osk_r1(model);
+        else if (r == 2) g_ui->set_ed_osk_r2(model);
+        else g_ui->set_ed_osk_r3(model);
+    }
+    g_ui->set_ed_osk_shift(g_ed.osk_shift);
+}
+
+static void ed_osk_key(const std::string k)
+{
+    if (k == "BACKSPACE") { ed_backspace(); return; }
+    if (k == "DEL") { ed_delete_key(); return; }
+    if (k == "ENTER") { ed_insert_str("\n", 1); return; }
+    if (k == "SPACE") { ed_insert_str(" ", 1); return; }
+    if (k == "LEFT")  { ed_move(-1, 0, false, false); return; }
+    if (k == "RIGHT") { ed_move(1, 0, false, false); return; }
+    if (k == "UP")    { ed_move(0, -1, false, false); return; }
+    if (k == "DOWN")  { ed_move(0, 1, false, false); return; }
+    if (k == "HOME")  { ed_move(0, 0, true, false); return; }
+    if (k == "END")   { ed_move(0, 0, false, true); return; }
+    if (k == "HIDE")  { g_ed.osk_override = 0; ed_push_ui(false); return; }
+    ed_insert_str(k.data(), k.size());
+}
+
+/* ================================================================== */
+/* GERENCIADOR DE ARQUIVOS                                             */
+/* ================================================================== */
 static bool is_textish(const char *name)
 {
     const char *exts[] = { ".txt", ".lua", ".md", ".csv", ".log", ".ini", ".json" };
@@ -128,7 +426,6 @@ static void list_dir_async(const std::string dir)
         auto names = std::make_shared<slint::VectorModel<slint::SharedString>>();
         auto isdir = std::make_shared<slint::VectorModel<bool>>();
 
-        /* sempre oferece subir, exceto na raiz do VFS */
         DIR *d = opendir(dir.c_str());
         if (d) {
             std::vector<std::string> dirs, files;
@@ -170,41 +467,19 @@ static void fm_open_entry(const std::string name)
         return;
     }
     if (is_textish(name.c_str())) {
-        /* abre no editor de notas (M2 vira editor genérico) */
-        char *data = NULL; size_t len = 0;
-        if (storage_read_file_alloc(full.c_str(), &data, &len) == ESP_OK) {
-            std::string content(data, len);
-            free(data);
-            slint::invoke_from_event_loop([name, content]() {
-                g_ui->set_note_name(slint::SharedString(name));
-                g_ui->set_note_buffer(slint::SharedString(content));
-                g_ui->set_note_is_new(false);
-                g_ui->set_active_app(AppState::NoteEdit);
-            });
-            s_session_app = "noteedit";
-            s_session_note = name;
-        } else {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "[erro] não abriu %s", full.c_str());
-            log_line(buf, NULL);
-        }
+        ed_open_path_async(full);
         return;
     }
     char buf[256];
     int64_t sz = storage_file_size(full.c_str());
-    snprintf(buf, sizeof(buf), "[info] %s: %ld bytes (visualização no M2)",
+    snprintf(buf, sizeof(buf), "[info] %s: %ld bytes (visualização no M3)",
              name.c_str(), (long)sz);
     log_line(buf, NULL);
 }
 
-/* ---------------- notas -------------------------------------------- */
-static std::string notes_dir(void)
-{
-    char buf[160];
-    pda_path(buf, sizeof(buf), "notes");
-    return std::string(buf);
-}
-
+/* ================================================================== */
+/* NOTAS                                                               */
+/* ================================================================== */
 static std::string generate_new_note_name(void)
 {
     int max_n = 0;
@@ -250,7 +525,9 @@ static void refresh_notes_list(void)
     }).detach();
 }
 
-/* ---------------- scripts lua -------------------------------------- */
+/* ================================================================== */
+/* SCRIPTS LUA                                                         */
+/* ================================================================== */
 static void refresh_scripts_list(void)
 {
     spawn_thread("io_scripts", 8192, []() {
@@ -299,7 +576,9 @@ static void run_script_async(const std::string name)
     }).detach();
 }
 
-/* ---------------- sessão (hibernação) ----------------------------- */
+/* ================================================================== */
+/* SESSÃO (hibernação)                                                 */
+/* ================================================================== */
 static void session_save(void *ctx)
 {
     (void)ctx;
@@ -330,15 +609,8 @@ static void session_restore_if_needed(void)
 
     ESP_LOGI(TAG, "restaurando sessão: app=%s note=%s", app.c_str(), note.c_str());
     if (app == "noteedit" && !note.empty()) {
-        std::string full = notes_dir() + "/" + note + ".txt";
-        char *nd = NULL; size_t nl = 0;
-        if (storage_read_file_alloc(full.c_str(), &nd, &nl) == ESP_OK) {
-            g_ui->set_note_name(slint::SharedString(note));
-            g_ui->set_note_buffer(slint::SharedString(std::string(nd, nl)));
-            g_ui->set_note_is_new(false);
-            g_ui->set_active_app(AppState::NoteEdit);
-            free(nd);
-        }
+        std::string full = std::string(pda_root()) + "/" + note;
+        ed_open_path_async(full);
     } else if (app == "notes") {
         refresh_notes_list();
         g_ui->set_active_app(AppState::NotesList);
@@ -353,7 +625,9 @@ static void session_restore_if_needed(void)
     storage_delete_file(path);
 }
 
-/* ---------------- config UI --------------------------------------- */
+/* ================================================================== */
+/* CONFIG UI                                                           */
+/* ================================================================== */
 static void push_settings_to_ui(void)
 {
     const pda_settings_t *s = pda_settings();
@@ -375,7 +649,7 @@ static void push_settings_to_ui(void)
 /* ================================================================== */
 extern "C" void app_main(void)
 {
-    ESP_LOGI(TAG, "=== PDA M1 — bring-up ===");
+    ESP_LOGI(TAG, "=== PDA M2 — bring-up ===");
 
     board_storage_init();
     pda_config_init();
@@ -410,6 +684,7 @@ extern "C" void app_main(void)
     g_fm_dir = pda_root();
 
     push_settings_to_ui();
+    ed_push_osk_rows();
 
     /* ---------- status bar ---------- */
     ui->on_tick([]() { update_clock(); });
@@ -442,10 +717,10 @@ extern "C" void app_main(void)
     ui->on_request_dir([](slint::SharedString arg) {
         activity();
         std::string a(arg.data());
-        if (!a.empty() && a[0] == '/') {          /* refresh: caminho completo */
+        if (!a.empty() && a[0] == '/') {
             g_fm_dir = a;
             list_dir_async(g_fm_dir);
-        } else {                                   /* toque numa entrada */
+        } else {
             fm_open_entry(a);
         }
     });
@@ -456,7 +731,6 @@ extern "C" void app_main(void)
         if (slash != std::string::npos && slash > 0) {
             std::string parent = d.substr(0, slash);
             if (parent.empty()) parent = "/";
-            /* não subir acima das raízes montadas */
             if (parent == "/sdcard" || parent == "/internal" || parent == "/") {
                 g_fm_dir = pda_root();
             } else {
@@ -474,43 +748,51 @@ extern "C" void app_main(void)
         activity();
         std::string n(name.data());
         if (n.rfind("(nenhuma", 0) == 0) return;
-        std::string full = notes_dir() + "/" + n + ".txt";
-        char *data = NULL; size_t len = 0;
-        if (storage_read_file_alloc(full.c_str(), &data, &len) == ESP_OK) {
-            g_ui->set_note_name(name);
-            g_ui->set_note_buffer(slint::SharedString(std::string(data, len)));
-            g_ui->set_note_is_new(false);
-            g_ui->set_active_app(AppState::NoteEdit);
-            free(data);
-            s_session_app = "noteedit";
-            s_session_note = n;
-        }
+        ed_open_path_async(notes_dir() + "/" + n + ".txt");
     });
     ui->on_new_note([]() {
         activity();
         std::string name = generate_new_note_name();
-        g_ui->set_note_name(slint::SharedString(name));
-        g_ui->set_note_buffer(slint::SharedString(""));
-        g_ui->set_note_is_new(true);
-        g_ui->set_active_app(AppState::NoteEdit);
-        s_session_app = "noteedit";
-        s_session_note = name;
+        std::string path = notes_dir() + "/" + name + ".txt";
+        ed_load(path, "", true);
     });
-    ui->on_save_note([]() {
+
+    /* ---------- editor ---------- */
+    ui->on_ed_line_tapped([](int line) {
         activity();
-        std::string name(g_ui->get_note_name().data());
-        std::string content(g_ui->get_note_buffer().data());
-        std::string full = notes_dir() + "/" + name + ".txt";
-        if (storage_write_text_file(full.c_str(), content.data(), content.size()) == ESP_OK) {
-            g_ui->set_note_is_new(false);
-            ESP_LOGI(TAG, "nota salva: %s (%u bytes)", full.c_str(), (unsigned)content.size());
+        /* cursor no FIM da linha tocada (coluna via setas/OSK) */
+        size_t line_start = 0;
+        int idx = 0;
+        for (size_t i = 0; i <= g_ed.text.size(); i++) {
+            if (i == g_ed.text.size() || g_ed.text[i] == '\n') {
+                if (idx == line) { g_ed.cursor = i; break; }
+                idx++;
+                line_start = i + 1;
+                (void)line_start;
+            }
         }
+        ed_push_ui(true);
     });
-    ui->on_delete_note([]() {
+    ui->on_ed_osk_key([](slint::SharedString k) {
         activity();
-        std::string name(g_ui->get_note_name().data());
-        std::string full = notes_dir() + "/" + name + ".txt";
-        storage_delete_file(full.c_str());
+        ed_osk_key(std::string(k.data()));
+    });
+    ui->on_ed_osk_shift_set([](bool s) {
+        activity();
+        g_ed.osk_shift = s;
+        ed_push_osk_rows();
+    });
+    ui->on_ed_toggle_osk([]() {
+        activity();
+        g_ed.osk_override = ed_osk_should_show() ? 0 : 1;
+        ed_push_ui(false);
+    });
+    ui->on_ed_save([]() { activity(); ed_save(); });
+    ui->on_ed_delete([]() {
+        activity();
+        if (g_ed.path.rfind(notes_dir() + "/", 0) != 0) return;  /* segurança */
+        storage_delete_file(g_ed.path.c_str());
+        g_ed.path.clear();
         g_ui->set_active_app(AppState::NotesList);
         refresh_notes_list();
     });
@@ -525,9 +807,7 @@ extern "C" void app_main(void)
     });
     ui->on_clear_script_log([]() {
         activity();
-        if (g_script_log) {
-            g_script_log->clear();
-        }
+        if (g_script_log) g_script_log->clear();
     });
 
     /* ---------- config ---------- */
@@ -543,6 +823,7 @@ extern "C" void app_main(void)
         pda_settings_update(&s);
         pda_config_save();
         apply_brightness_from_settings();
+        ed_push_ui(false);   /* osk_auto pode ter mudado */
         log_line("[config] salva em system.lua", NULL);
     });
     ui->on_cfg_reset([]() {
@@ -555,36 +836,28 @@ extern "C" void app_main(void)
         power_mgmt_request_standby();
     });
     ui->on_cfg_hibernate([]() {
-        /* sessão é salva pelo hook dentro de power_mgmt_hibernate() */
         power_mgmt_hibernate();
     });
 
     /* ---------- teclado USB ---------- */
     usb_hid_keyboard_init([](uint8_t ascii, uint8_t keycode, uint8_t /*mod*/) {
-        char buf[16];
-        if (ascii == '\n') snprintf(buf, sizeof(buf), "Enter");
-        else if (ascii == '\b') snprintf(buf, sizeof(buf), "Backspace");
-        else if (ascii == '\t') snprintf(buf, sizeof(buf), "Tab");
-        else if (ascii == ' ') snprintf(buf, sizeof(buf), "Espaco");
-        else if (ascii != 0) snprintf(buf, sizeof(buf), "%c", ascii);
-        else snprintf(buf, sizeof(buf), "0x%02X", keycode);
-        std::string label(buf);
-
-        slint::invoke_from_event_loop([label, ascii]() {
+        slint::invoke_from_event_loop([ascii, keycode]() {
             activity();
-            if (!g_hid_seen) {
-                g_hid_seen = true;
-                g_ui->set_has_keyboard(true);
+            if (g_ui->get_active_app() != AppState::Editor) return;
+            switch (keycode) {
+            case 0x4F: ed_move(1, 0, false, false); return;    // Right
+            case 0x50: ed_move(-1, 0, false, false); return;   // Left
+            case 0x51: ed_move(0, 1, false, false); return;    // Down
+            case 0x52: ed_move(0, -1, false, false); return;   // Up
+            case 0x4A: ed_move(0, 0, true, false); return;     // Home
+            case 0x4D: ed_move(0, 0, false, true); return;     // End
+            case 0x4C: ed_delete_key(); return;                // Delete
+            default: break;
             }
-            if (g_ui->get_active_app() == AppState::NoteEdit && ascii != 0) {
-                std::string text(g_ui->get_note_buffer().data());
-                if (ascii == '\b') {
-                    if (!text.empty()) text.pop_back();
-                } else if (ascii != '\t') {
-                    text += (char)ascii;
-                }
-                g_ui->set_note_buffer(slint::SharedString(text));
-            }
+            if (ascii == 0) return;
+            if (ascii == '\b') ed_backspace();
+            else if (ascii == '\t') ed_insert_str("  ", 2);
+            else ed_insert_str((const char *)&ascii, 1);
         });
     },
     [](bool connected) {
@@ -593,19 +866,16 @@ extern "C" void app_main(void)
             activity();
             g_hid_seen = g_hid_seen || connected;
             g_ui->set_has_keyboard(connected);
+            if (g_ui->get_active_app() == AppState::Editor) ed_push_ui(false);
         });
     });
 
     /* ---------- power ---------- */
     power_mgmt_set_standby_cb([](bool entering, void *) {
         if (entering) {
-            /* DWC2 não sobrevive ao light sleep: teardown ordenado antes. */
             usb_hid_keyboard_prepare_sleep();
             return;
         }
-        /* Acordou: o periférico SDMMC não sobrevive ao light sleep
-         * (host fica surdo: sdmmc_host_wait_for_event 0x107), então
-         * remontamos ANTES de qualquer I/O voltar a acontecer. */
         storage_remount_sd();
         usb_hid_keyboard_resume();
         slint::invoke_from_event_loop([]() {

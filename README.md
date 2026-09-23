@@ -115,3 +115,8 @@ No Slint **1.18.1** isso não foi suficiente (glifos inflados mesmo p/ ASCII,
   (`FOO=1  # bla` invalida o valor e o símbolo cai no default, em silêncio).
   Comentários só em linha própria. Já causou stack de 3584 B no lugar de
   32768 B e `Stack protection fault` no boot.
+- **Plugin Slint do VSCode roda um Slint MAIS NOVO que o build (1.12.1).**
+  Avisos de deprecação dele (ex.: `viewport-*` -> `content-*` no Flickable)
+  são RUÍDO: no 1.12.1 os nomes válidos são `viewport-*` (confirmado no
+  fonte do Flickable: 1.12 tem `viewport_x/y`, 1.18 tem `content_x/y`).
+  Erros (severity error) do plugin, porém, valem para qualquer versão.

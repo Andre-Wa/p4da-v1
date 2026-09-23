@@ -16,12 +16,25 @@ Nada de M(n+1) começa com pendência de M(n).
 - **Aceite**: boot sem cartão não trava; com cartão, tudo grava nele; standby
   acorda por botão; hibernate restaura a nota aberta; `exemplo.lua` roda sem derrubar.
 
-## M2 — Edição de texto de verdade
-- Editor com cursor visível/móvel (touch + setas do teclado), scroll nas duas direções
-- **Teclado virtual** (touch) quando não houver HID (`ui.onscreen_keyboard_auto`)
-- Abrir/salvar qualquer arquivo texto pelo gerenciador (não só `notes/`)
-- Destaque leve para `.lua` (opcional)
-- **Aceite**: editar um `.lua` pelo teclado virtual e executá-lo na tela Scripts.
+## M2 — Edição de texto de verdade (FEITO, exceto destaque)
+- [x] Editor com cursor visível ("|" na linha de exibição) e móvel:
+      setas/Home/End/Delete no teclado USB, toque posiciona o cursor no
+      FIM da linha tocada, OSK tem setas/Home? (setas + del; Home/End via
+      teclado físico), scroll vertical e horizontal (Flickable)
+- [x] **Teclado virtual** em 4 fileiras + shift + espaço/enter/backspace/
+      setas/del, automático quando `onscreen_keyboard_auto && !USB`,
+      ou manual pelo botão "Tecl" (tri-estado: auto/força-on/força-off)
+- [x] Gerenciador abre qualquer arquivo texto (.txt .lua .md .csv .log
+      .ini .json) no editor; Salvar grava de volta no mesmo caminho
+- [x] "Apagar" só aparece para arquivos dentro de `notes/` (segurança)
+- [ ] Destaque leve para `.lua` — DEFERIDO (opcional no escopo original)
+- **Aceite**: editar um `.lua` pelo teclado virtual e executá-lo na tela
+  Scripts.
+- Limitações conhecidas (documentadas, não bugs): o toque posiciona a
+  LINHA (coluna via setas/OSK); largura de scroll horizontal é estimada
+  (10 px/char p/ fonte 16 px); o editor instancia um elemento por linha
+  (Flickable), então arquivos com milhares de linhas ficam lentos —
+  virtualização fica p/ M3.
 
 ## M3 — Arquivos avançados
 - Hot-plug do SD (remontar sem reboot) + aviso na status bar

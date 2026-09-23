@@ -81,3 +81,36 @@ anterior e o driver responde `ESP_ERR_INVALID_STATE`
 rasga a tela e mata o touch. Síncrono (CPU) é determinístico e sobra CPU
 no P4. Medido no boot de 2026-09-22: sem DMA2D o bring-up completa e o
 loop do Slint roda limpo.
+
+## A tecla ao lado do conector de bateria = KEY do IP5306 (BF2)
+
+Folha 02 do esquemático: o tact switch **BF2** liga o pino **KEY (5)** do
+IP5306 ao GND através de **R48 10K**. **Não chega em nenhum GPIO do
+ESP32-P4** — por isso não existe `#define` dela no `board_config.h` e o
+firmware não a lê hoje. (Os pinos LED1-3 do IP5306 aparecem NC nesta
+variante, então a consulta de nível pode não ter feedback visível.)
+
+Comportamento (típico do IP5306, um SoC de power bank):
+
+| Situação | Ação da tecla |
+|---|---|
+| Saída cortada, só bateria ("placa off") | toque curto liga VOUT → boot frio |
+| Rodando na bateria | toque curto = consulta nível (LEDs, se populados) |
+| Rodando na bateria | **segurar ~2-3 s = corta VOUT = power-off total** |
+| USB conectado | carga automática; tecla só consulta/força saída |
+
+Consequência de projeto: o IP5306 também tem **auto-desligue** de power
+bank (carga abaixo do limiar sem USB). Nosso HIBERNATE (deep sleep,
+consumo mínimo) na bateria pode ser cortado por ele — e isso é *feature*:
+vira o "desligar" do PDA, e o boot frio seguinte restaura a sessão de
+`<raiz>/.state/session.txt`. Em STANDBY (light sleep, dezenas de mA) a
+carga segura o IP5306 acordado e o wake continua sendo BOOT/GT911.
+
+**Mod opcional p/ torná-la botão de software:** 1 fio do nó do switch p/
+um **LP GPIO livre (0-15; ex. GPIO4/GPIO6 no header de 26 pinos)** —
+precisa ser LP para servir de wake de deep sleep (ver docs/POWER.md).
+Pull-up interno + ISR; atrás de um `#define BOARD_PWR_KEY_GPIO` para não
+afetar placas sem o mod. Não feito em M1 de propósito.
+
+*Não confundir*: o botão **BOOT (GPIO35, strapping)** é outro componente,
+em outro ponto da placa, e esse o firmware lê (wake do light sleep).

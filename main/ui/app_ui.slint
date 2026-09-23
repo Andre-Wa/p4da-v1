@@ -1,12 +1,12 @@
-// app_ui.slint - UI do PDA (800x480 paisagem)
-// Roteador de telas + status bar. Milestone M1.
+// app_ui.slint — UI do PDA (800x480 paisagem)
+// M2: editor com cursor + teclado virtual + abrir qualquer texto.
 import { ListView, Slider, CheckBox } from "std-widgets.slint";
 
 export enum AppState {
     Launcher,
     FileManager,
     NotesList,
-    NoteEdit,
+    Editor,
     Scripts,
     Settings,
 }
@@ -39,13 +39,14 @@ component AppButton inherits Rectangle {
 component SmallButton inherits Rectangle {
     in property <string> text;
     in property <color> tint: #4a90d9;
+    in property <length> fsize: 15px;
     callback clicked;
     border-radius: 8px;
     background: touch-area.pressed ? #2d6a9f : root.tint;
     Text {
         text: root.text;
         color: white;
-        font-size: 15px;
+        font-size: root.fsize;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -61,7 +62,7 @@ component LauncherScreen inherits Rectangle {
         spacing: 14px;
 
         Text {
-            text: "PDA - Menu Principal";
+            text: "PDA — Menu Principal";
             font-size: 26px;
             font-weight: 700;
             color: white;
@@ -129,6 +130,8 @@ component FileManagerScreen inherits Rectangle {
             vertical-stretch: 1;
 
             ListView {
+                width: 100%;
+                height: 100%;
                 for entry[i] in root.entries: TouchArea {
                     height: 42px;
                     clicked => { root.open-entry(entry); }
@@ -174,6 +177,8 @@ component NotesListScreen inherits Rectangle {
             border-radius: 8px;
             vertical-stretch: 1;
             ListView {
+                width: 100%;
+                height: 100%;
                 for note in root.notes: TouchArea {
                     height: 44px;
                     clicked => { root.open-note(note); }
@@ -188,26 +193,135 @@ component NotesListScreen inherits Rectangle {
     }
 }
 
-component NoteEditScreen inherits Rectangle {
-    in property <string> note-name;
-    in property <string> note-buffer;
-    in property <bool> is-new;
-    in property <bool> has-keyboard;
-    callback save-note();
-    callback delete-note();
-    callback go-back();
+// ---------------------------------------------------------------- teclado virtual
+component OSKKey inherits Rectangle {
+    in property <string> label;
+    in property <string> code;
+    in property <color> tint: #2a3140;
+    callback hit(string);
+    border-radius: 6px;
+    background: ta.pressed ? #4a90d9 : root.tint;
+    Text { text: root.label; color: white; font-size: 15px;
+           horizontal-alignment: center; vertical-alignment: center; }
+    ta := TouchArea { clicked => { root.hit(root.code); } }
+}
+
+
+component OnScreenKeyboard inherits Rectangle {
+    in property <[string]> r0;
+    in property <[string]> r1;
+    in property <[string]> r2;
+    in property <[string]> r3;
+    in property <bool> shift;
+    callback key(string);          // caractere imprimível ou token: BACKSPACE/ENTER/SPACE/LEFT/RIGHT/UP/DOWN/HOME/END/DEL/SHIFT/HIDE
+    callback shift-changed(bool);
+
+    background: #0d1016;
+    border-width: 1px;
+    border-color: #333c4d;
 
     VerticalLayout {
-        padding: 16px;
-        spacing: 10px;
+        padding: 6px;
+        spacing: 6px;
 
         HorizontalLayout {
-            spacing: 10px;
-            Text { text: root.note-name; font-size: 22px; font-weight: 700; color: white;
-                   vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-            SmallButton { width: 90px; height: 36px; text: "Salvar"; clicked => { root.save-note(); } }
-            if !root.is-new: SmallButton { width: 90px; height: 36px; text: "Apagar"; tint: #d9534f; clicked => { root.delete-note(); } }
-            SmallButton { width: 90px; height: 36px; text: "Voltar"; tint: #4d5566; clicked => { root.go-back(); } }
+            spacing: 5px;
+            for c in root.r0: OSKKey {
+                horizontal-stretch: 1;
+                label: c;
+                code: c;
+                hit(k) => { root.key(k); }
+            }
+        }
+        HorizontalLayout {
+            spacing: 5px;
+            for c in root.r1: OSKKey {
+                horizontal-stretch: 1;
+                label: c;
+                code: c;
+                hit(k) => { root.key(k); }
+            }
+        }
+        HorizontalLayout {
+            spacing: 5px;
+            for c in root.r2: OSKKey {
+                horizontal-stretch: 1;
+                label: c;
+                code: c;
+                hit(k) => { root.key(k); }
+            }
+        }
+        HorizontalLayout {
+            spacing: 5px;
+            OSKKey { width: 64px; label: root.shift ? "SHIFT*" : "SHIFT"; code: "SHIFT"; tint: #3a4150;
+                  hit(k) => { root.shift-changed(!root.shift); } }
+            for c in root.r3: OSKKey {
+                horizontal-stretch: 1;
+                label: c;
+                code: c;
+                hit(k) => { root.key(k); }
+            }
+            OSKKey { width: 64px; label: "<-"; code: "BACKSPACE"; tint: #8B0000; hit(k) => { root.key(k); } }
+        }
+        HorizontalLayout {
+            spacing: 5px;
+            OSKKey { width: 52px; label: "<"; code: "LEFT";  tint: #3a4150; hit(k) => { root.key(k); } }
+            OSKKey { width: 52px; label: ">"; code: "RIGHT"; tint: #3a4150; hit(k) => { root.key(k); } }
+            OSKKey { width: 52px; label: "^"; code: "UP";    tint: #3a4150; hit(k) => { root.key(k); } }
+            OSKKey { width: 52px; label: "v"; code: "DOWN";  tint: #3a4150; hit(k) => { root.key(k); } }
+            OSKKey { horizontal-stretch: 1; label: "espaco"; code: "SPACE"; hit(k) => { root.key(k); } }
+            OSKKey { width: 70px; label: "del"; code: "DEL"; tint: #3a4150; hit(k) => { root.key(k); } }
+            OSKKey { width: 70px; label: "enter"; code: "ENTER"; tint: #2d6a9f; hit(k) => { root.key(k); } }
+            OSKKey { width: 52px; label: "ok"; code: "HIDE"; tint: #4d5566; hit(k) => { root.key(k); } }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- editor
+component EditorScreen inherits Rectangle {
+    in property <string> title;
+    in property <[string]> lines;      // linhas de exibição (cursor embutido)
+    in property <int> line-count;
+    in property <length> content-w: 780px;
+    in property <bool> dirty;
+    in property <bool> can-delete;
+    in property <bool> show-osk;
+    in property <bool> osk-shift;
+    in property <[string]> osk-r0;
+    in property <[string]> osk-r1;
+    in property <[string]> osk-r2;
+    in property <[string]> osk-r3;
+    in-out property <length> scroll-y: 0px;
+    in-out property <length> scroll-x: 0px;
+    callback line-tapped(int);
+    callback osk-key(string);
+    callback osk-shift-changed(bool);
+    callback save();
+    callback delete-file();
+    callback toggle-osk();
+    callback go-back();
+
+    property <int> line-h: 22;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: root.title + (root.dirty ? " *" : "");
+                font-size: 17px;
+                font-weight: 700;
+                color: white;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            SmallButton { width: 80px; height: 34px; text: "Salvar"; clicked => { root.save(); } }
+            if root.can-delete: SmallButton { width: 80px; height: 34px; text: "Apagar"; tint: #d9534f; clicked => { root.delete-file(); } }
+            SmallButton { width: 80px; height: 34px; text: "Tecl"; tint: #4d5566; clicked => { root.toggle-osk(); } }
+            SmallButton { width: 80px; height: 34px; text: "Voltar"; tint: #4d5566; clicked => { root.go-back(); } }
         }
 
         Rectangle {
@@ -216,28 +330,48 @@ component NoteEditScreen inherits Rectangle {
             border-width: 1px;
             border-color: #333c4d;
             vertical-stretch: 1;
+            clip: true;
 
             Flickable {
-                viewport-height: content-text.height;
-                content-text := Text {
-                    x: 12px;
-                    y: 10px;
-                    width: parent.width - 24px;
-                    text: root.note-buffer + "|";
-                    color: white;
-                    font-size: 17px;
-                    wrap: word-wrap;
+                width: 100%;
+                height: 100%;
+                viewport-height: root.line-count * root.line-h * 1px + 40px;
+                viewport-width: root.content-w;
+                viewport-y <=> root.scroll-y;
+                viewport-x <=> root.scroll-x;
+
+                VerticalLayout {
+                    spacing: 0px;
+                    for line[i] in root.lines: Rectangle {
+                        height: root.line-h * 1px;
+                        width: root.content-w;
+                        TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => { root.line-tapped(i); }
+                        }
+                        Text {
+                            x: 6px;
+                            text: line;
+                            font-size: 16px;
+                            color: #e8ecf4;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
                 }
             }
         }
 
-        Text {
-            text: root.has-keyboard
-                ? "Teclado USB ativo - Salvar grava em " + "notas/"
-                : "Sem teclado USB detectado - teclado virtual chega no M2 (docs/ROADMAP.md)";
-            font-size: 13px;
-            color: #6b7688;
-            horizontal-alignment: center;
+        if root.show-osk: OnScreenKeyboard {
+            height: 190px;
+            r0: root.osk-r0;
+            r1: root.osk-r1;
+            r2: root.osk-r2;
+            r3: root.osk-r3;
+            shift: root.osk-shift;
+            key(k) => { root.osk-key(k); }
+            shift-changed(s) => { root.osk-shift-changed(s); }
         }
     }
 }
@@ -269,6 +403,8 @@ component ScriptsScreen inherits Rectangle {
                 border-radius: 8px;
                 vertical-stretch: 1;
                 ListView {
+                    width: 100%;
+                    height: 100%;
                     for s in root.scripts: TouchArea {
                         height: 40px;
                         clicked => { root.run-script(s); }
@@ -297,6 +433,8 @@ component ScriptsScreen inherits Rectangle {
                 border-radius: 8px;
                 vertical-stretch: 1;
                 ListView {
+                    width: 100%;
+                    height: 100%;
                     for line in root.log: Text {
                         height: 22px;
                         x: 8px;
@@ -396,7 +534,7 @@ export component AppWindow inherits Window {
     in property <string> status-store: "...";
     in property <string> status-batt: "--";
     in property <string> status-pwr: "";
-    callback tick();   // disparado 1x/s por um Timer interno
+    callback tick();
 
     // arquivos
     in property <[string]> file-entries;
@@ -408,14 +546,29 @@ export component AppWindow inherits Window {
     // notas
     in property <[string]> notes-list;
     callback request-notes-list();
-    in-out property <string> note-name: "";
-    in-out property <string> note-buffer: "";
-    in-out property <bool> note-is-new: false;
+
+    // editor
+    in property <string> ed-title: "";
+    in property <[string]> ed-lines;
+    in property <int> ed-line-count: 0;
+    in property <length> ed-content-w: 780px;
+    in property <bool> ed-dirty: false;
+    in property <bool> ed-can-delete: false;
+    in property <bool> ed-show-osk: false;
+    in property <bool> ed-osk-shift: false;
+    in property <[string]> ed-osk-r0;
+    in property <[string]> ed-osk-r1;
+    in property <[string]> ed-osk-r2;
+    in property <[string]> ed-osk-r3;
+    in-out property <length> ed-scroll-y: 0px;
+    in-out property <length> ed-scroll-x: 0px;
     in property <bool> has-keyboard: false;
-    callback open-note(string);
-    callback new-note();
-    callback save-note();
-    callback delete-note();
+    callback ed-line-tapped(int);
+    callback ed-osk-key(string);
+    callback ed-osk-shift-set(bool);
+    callback ed-save();
+    callback ed-delete();
+    callback ed-toggle-osk();
 
     // scripts
     in property <[string]> scripts-list;
@@ -448,7 +601,6 @@ export component AppWindow inherits Window {
         padding: 0px;
         spacing: 0px;
 
-        // ---- status bar ----
         Rectangle {
             height: 30px;
             background: #0d1016;
@@ -464,15 +616,18 @@ export component AppWindow inherits Window {
             }
         }
 
-        // ---- conteúdo ----
         Rectangle {
             vertical-stretch: 1;
             background: #14181f;
 
             if (root.active-app == AppState.Launcher) : LauncherScreen {
+                width: 100%;
+                height: 100%;
                 open-app(app-name) => { root.open-app-dispatch(app-name); }
             }
             if (root.active-app == AppState.FileManager) : FileManagerScreen {
+                width: 100%;
+                height: 100%;
                 entries: root.file-entries;
                 entries-is-dir: root.file-is-dir;
                 current-path: root.file-path;
@@ -483,21 +638,41 @@ export component AppWindow inherits Window {
                 go-back => { root.active-app = AppState.Launcher; }
             }
             if (root.active-app == AppState.NotesList) : NotesListScreen {
+                width: 100%;
+                height: 100%;
                 notes: root.notes-list;
                 go-back => { root.active-app = AppState.Launcher; }
                 open-note(n) => { root.open-note(n); }
                 new-note => { root.new-note(); }
             }
-            if (root.active-app == AppState.NoteEdit) : NoteEditScreen {
-                note-name: root.note-name;
-                note-buffer: root.note-buffer;
-                is-new: root.note-is-new;
-                has-keyboard: root.has-keyboard;
-                save-note => { root.save-note(); }
-                delete-note => { root.delete-note(); }
-                go-back => { root.active-app = AppState.NotesList; root.request-notes-list(); }
+            if (root.active-app == AppState.Editor) : EditorScreen {
+                width: 100%;
+                height: 100%;
+                title: root.ed-title;
+                lines: root.ed-lines;
+                line-count: root.ed-line-count;
+                content-w: root.ed-content-w;
+                dirty: root.ed-dirty;
+                can-delete: root.ed-can-delete;
+                show-osk: root.ed-show-osk;
+                osk-shift: root.ed-osk-shift;
+                osk-r0: root.ed-osk-r0;
+                osk-r1: root.ed-osk-r1;
+                osk-r2: root.ed-osk-r2;
+                osk-r3: root.ed-osk-r3;
+                scroll-y <=> root.ed-scroll-y;
+                scroll-x <=> root.ed-scroll-x;
+                line-tapped(i) => { root.ed-line-tapped(i); }
+                osk-key(k) => { root.ed-osk-key(k); }
+                osk-shift-changed(s) => { root.ed-osk-shift-set(s); }
+                save => { root.ed-save(); }
+                delete-file => { root.ed-delete(); }
+                toggle-osk => { root.ed-toggle-osk(); }
+                go-back => { root.active-app = AppState.Launcher; }
             }
             if (root.active-app == AppState.Scripts) : ScriptsScreen {
+                width: 100%;
+                height: 100%;
                 scripts: root.scripts-list;
                 log: root.script-log;
                 run-script(s) => { root.run-script(s); }
@@ -506,6 +681,8 @@ export component AppWindow inherits Window {
                 go-back => { root.active-app = AppState.Launcher; }
             }
             if (root.active-app == AppState.Settings) : SettingsScreen {
+                width: 100%;
+                height: 100%;
                 brightness <=> root.cfg-brightness;
                 dim-s <=> root.cfg-dim-s;
                 off-s <=> root.cfg-off-s;
@@ -523,6 +700,7 @@ export component AppWindow inherits Window {
         }
     }
 
-    // dispatch interno do launcher (mantém o C++ como fonte da verdade)
     callback open-app-dispatch(string);
+    callback open-note(string);
+    callback new-note();
 }
