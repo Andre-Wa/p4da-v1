@@ -56,6 +56,21 @@ Regras:
 - Semânticas: `success` p/ diretórios/scripts/SD, `tertiary` p/ dirty/bateria,
   `error*` p/ destrutivo.
 
+## Escala de UI: estática, via tools/scale_type.py
+
+Todos os tokens de tamanho (fontes, formas, espaços, alturas) são
+`in property` **estáticos** no `theme.slint`, com base ~15% maior que o
+design original. Não existe escala em runtime (removida em 2026-09-23):
+o renderer pré-rasteriza fontes por tamanho estático, e tokens mutáveis
+em runtime causaram bootloop por NaN (docs/POWER.md).
+
+Para testar outra escala:
+    python3 tools/scale_type.py 1.15 && idf.py build
+(o fator multiplica os valores ATUAIS; p/ escala absoluta, `git checkout`
+do theme antes). `main.cpp` espelha 5 métricas do theme para o cálculo de
+scroll-do-cursor (ED_LINE_H, ED_OSK_H, ED_STATUS_H, ED_BTN_SM, ED_CHAR_W) —
+o script avisa para conferi-las após escalar.
+
 ## Teclado virtual (OSK)
 
 Layout "telefone": 3 fileiras de letras + fileira de funções, com a tecla

@@ -77,3 +77,13 @@ wake do `power_mgmt`, antes de a UI voltar a tocar no VFS; se o cartão não
 voltar, a raiz ativa degrada para `/internal/pda` e o PDA segue usável.
 Os `--- ERROR: device reports readiness to read...` do monitor são só o
 USB-Serial-JTAG dormindo (cosmético).
+
+## Bootloop de 2026-09-23: NaN em `ui.scale`
+
+Cadeia: `system.lua` com `scale` não-finito → `apply_ui_scale(NaN)` →
+tokens do Theme NaN → core Rust do Slint panica no layout → Guru
+Meditation → reset em loop. Defesas adicionadas (todas em `pda_config.c`
++ `main.cpp`): `tbl_int`/`tbl_flt` recusam não-finitos, `clamp_all` tem
+cheque explícito de `isfinite` (NaN escapa de `<`/`>`), `apply_ui_scale`
+re-clampa na entrada. **Regra geral: qualquer número que venha de arquivo
+ou de binding Slint e vire geometria deve ser validado com `isfinite`.**

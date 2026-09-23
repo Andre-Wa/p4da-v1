@@ -38,7 +38,7 @@
 
 static const char *TAG = "main";
 
-static const AppWindow *g_ui = nullptr;   /* handle vive em app_main() */
+static AppWindow *g_ui = nullptr;   /* ponteiro do component (handle vive em app_main) */
 static std::shared_ptr<slint::VectorModel<slint::SharedString>> g_script_log;
 static std::mutex g_lua_mtx;
 static std::string g_fm_dir;
@@ -46,12 +46,16 @@ static bool g_hid_seen = false;
 static std::string s_session_app = "launcher";
 static std::string s_session_note = "";
 
-/* geometria do editor (espelha app_ui.slint: line-h = 22) */
-static const int ED_LINE_H = 22;
-static const int ED_CHAR_W = 10;      /* largura média p/ 16px (aprox.) */
-static const int ED_STATUS_H = 30;
-static const int ED_HEADER_H = 42;
-static const int ED_OSK_H = 176;   // 168 do OSK + spacing 6 + folga
+/* Geometria do editor — ESPELHA os tokens ESTÁTICOS do theme.slint
+ * (line-h 25, osk-h 193, status-h 34, btn-h-sm 39, body 18px => ~11px/char).
+ * Modelo 100% estático: escala de UI se muda com tools/scale_type.py +
+ * rebuild (o renderer pré-rasteriza fontes; e tokens mutáveis em runtime
+ * já nos custaram um bootloop por NaN). Se mudar token lá, mude aqui. */
+static const float ED_LINE_H = 25.f;
+static const float ED_OSK_H = 193.f;
+static const float ED_STATUS_H = 34.f;
+static const float ED_BTN_SM = 39.f;
+static const int ED_CHAR_W = 11;
 
 static void activity(void) { power_mgmt_activity(); }
 
@@ -208,10 +212,10 @@ static void ed_push_ui(bool scroll_to_cursor)
     g_ui->set_ed_show_osk(ed_osk_should_show());
 
     if (scroll_to_cursor) {
-        int content_h = (int)lines.size() * ED_LINE_H + 40;
-        int area_h = 480 - ED_STATUS_H - ED_HEADER_H - 16 -
-                     (ed_osk_should_show() ? ED_OSK_H : 0);
-        int target = cursor_line * ED_LINE_H - area_h / 2;
+        int content_h = (int)(lines.size() * ED_LINE_H) + 40;
+        int area_h = (int)(480 - ED_STATUS_H - (ED_BTN_SM + 14) - 16 -
+                     (ed_osk_should_show() ? ED_OSK_H + 6 : 0));
+        int target = (int)(cursor_line * ED_LINE_H) - area_h / 2;
         if (target < 0) target = 0;
         int maxy = content_h - area_h;
         if (target > maxy) target = maxy > 0 ? maxy : 0;
@@ -355,7 +359,7 @@ static const char *s_osk_rows[2][2][3] = {
         { "Q W E R T Y U I O P", "A S D F G H J K L Ç", "Z X C V B N M , . ;" },
     },
     {   /* modo 123/símbolos */
-        { "1 2 3 4 5 6 7 8 9 0", "! @ # $ % ^ & * ( )", "- = [ ] \ _ + { } |" },
+        { "1 2 3 4 5 6 7 8 9 0", "! @ # $ % ^ & * ( )", "- = [ ] \\ _ + { } |" },
         { "` ~ € £ ¥ ° ¶ • ª º", "< > ? / : ; \" ' ´ ¨", "+ - × ÷ = ≠ ≈ ∞ § ¤" },
     },
 };

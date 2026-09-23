@@ -148,7 +148,7 @@ export component KeyCap inherits Rectangle {
     in property <string> code;
     in property <color> tint: Theme.surface-2;
     in property <color> fg: Theme.on-surface;
-    in property <length> fsize: 15px;
+    in property <length> fsize: Theme.key-fsize;
     callback hit(string);
 
     border-radius: Theme.shape-sm;

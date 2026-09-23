@@ -25,7 +25,8 @@ return {
 Chaves aceitas (as mesmas da API `pda.settings.*`):
 `display.brightness`, `power.dim_after_s`, `power.screen_off_after_s`,
 `power.deep_sleep_after_s`, `power.wake_on_touch`, `locale.timezone`,
-`locale.ntp_server`, `ui.onscreen_keyboard_auto`.
+`locale.ntp_server`, `ui.onscreen_keyboard_auto`, `ui.scale`
+(1.00 = 100%; multiplica tokens de tamanho/espaço do Theme; 0.90–1.50).
 
 ## 2. Pequenos programas — `scripts/*.lua`
 

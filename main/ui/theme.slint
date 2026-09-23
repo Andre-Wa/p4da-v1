@@ -42,32 +42,38 @@ export global Theme {
     in property <color> state-pressed: #ffffff;
     in property <color> state-hover: #ffffff;
 
-    // ---- forma ----
-    in property <length> shape-xs: 4px;
-    in property <length> shape-sm: 8px;
-    in property <length> shape-md: 12px;
-    in property <length> shape-lg: 16px;
-    in property <length> shape-xl: 28px;
+    // ---- forma (base x1.15) ----
+    in property <length> shape-xs: 5px;
+    in property <length> shape-sm: 9px;
+    in property <length> shape-md: 14px;
+    in property <length> shape-lg: 18px;
+    in property <length> shape-xl: 32px;
 
-    // ---- tipografia ----
-    in property <length> type-display: 30px;
-    in property <length> type-headline: 24px;
-    in property <length> type-title: 20px;
-    in property <length> type-body: 16px;
-    in property <length> type-label: 13px;
-    in property <length> type-tiny: 11px;
+    // ---- tipografia (ESTÁTICA de propósito!) ----
+    // O software renderer pré-rasteriza os glifos no COMPILE para cada
+    // tamanho estático; font-size dinâmico (in-out + set em runtime) faz
+    // tudo cair num tamanho único. p/ testar outra escala de FONTE:
+    //   python3 tools/scale_type.py 1.15   &&  idf.py build
+    in property <length> type-display: 34px;
+    in property <length> type-headline: 28px;
+    in property <length> type-title: 23px;
+    in property <length> type-body: 18px;
+    in property <length> type-label: 15px;
+    in property <length> type-tiny: 12px;
 
-    // ---- espaço ----
-    in property <length> sp-xs: 4px;
-    in property <length> sp-sm: 8px;
-    in property <length> sp-md: 12px;
-    in property <length> sp-lg: 16px;
-    in property <length> sp-xl: 24px;
+    // ---- espaço (base x1.15) ----
+    in property <length> sp-xs: 5px;
+    in property <length> sp-sm: 9px;
+    in property <length> sp-md: 14px;
+    in property <length> sp-lg: 18px;
+    in property <length> sp-xl: 28px;
 
     // ---- métricas de chrome ----
-    in property <length> status-h: 30px;
-    in property <length> btn-h: 38px;
-    in property <length> btn-h-sm: 34px;
-    in property <length> row-h: 42px;
-    in property <length> line-h: 22px;   // editor (espelha main.cpp ED_LINE_H)
+    in property <length> osk-h: 193px;      // altura total do teclado virtual
+    in property <length> key-fsize: 17px;    // fonte das teclas (estática)
+    in property <length> status-h: 34px;
+    in property <length> btn-h: 44px;
+    in property <length> btn-h-sm: 39px;
+    in property <length> row-h: 48px;
+    in property <length> line-h: 25px;   // editor (espelha main.cpp ED_LINE_H)
 }

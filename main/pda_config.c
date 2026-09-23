@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 static const char *TAG = "pda_config";
 
@@ -41,9 +42,10 @@ static void apply_defaults(pda_settings_t *s)
 static int tbl_int(lua_State *L, int idx, const char *name, int def)
 {
     lua_getfield(L, idx, name);
-    int v = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : def;
+    double d = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : (double)def;
     lua_pop(L, 1);
-    return v;
+    if (!isfinite(d)) d = def;   /* nan/inf no arquivo não derrubam o boot */
+    return (int)d;
 }
 
 static bool tbl_bool(lua_State *L, int idx, const char *name, bool def)
@@ -213,6 +215,9 @@ esp_err_t pda_config_init(void)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "mantendo defaults em memória (arquivo inválido)");
     } else {
+        /* Valores não-finitos no arquivo (ex.: o "scale = nan" que causou
+         * o bootloop de 2026-09-23) são substituídos pelos defaults no
+         * parse (tbl_int) e o arquivo é reescrito limpo no próximo save. */
         ESP_LOGI(TAG, "config carregada: brilho=%d dim=%ds off=%ds deep=%ds",
                  s_cfg.brightness, s_cfg.dim_after_s,
                  s_cfg.screen_off_after_s, s_cfg.deep_sleep_after_s);
