@@ -36,6 +36,13 @@ Nada de M(n+1) começa com pendência de M(n).
   (Flickable), então arquivos com milhares de linhas ficam lentos —
   virtualização fica p/ M3.
 
+## M2.5 — Design system + modularização da UI (FEITO)
+- [x] `app_ui.slint` monolítico -> módulos: `theme.slint` (tokens M3-dark
+      adaptados), `elements/` (botões/superfícies/OSK), `screens/` (1 tela/arquivo)
+- [x] Padronização visual: state layers, elevação tonal, type scale,
+      botões por papel (filled/tonal/danger/ghost) — ver `docs/UI.md`
+- [x] API pública da `AppWindow` (contrato com o C++) intacta
+
 ## M3 — Arquivos avançados
 - Hot-plug do SD (remontar sem reboot) + aviso na status bar
 - Copiar/mover/renomear/apagar com confirmação; novo diretório

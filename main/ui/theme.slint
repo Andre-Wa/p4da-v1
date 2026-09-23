@@ -1,0 +1,70 @@
+// theme.slint — design tokens do PDA (Material 3 Expressive adaptado)
+//
+// Adaptações p/ tela pequena (4.3" 800x480, IPS, uso com luz ambiente):
+//  - esquema dark de alto contraste com primário cian (legibilidade);
+//  - shapes menores que o M3 de celular (xl=28 só p/ destaques);
+//  - type scale comprimida (body 16px é o piso de conforto no painel);
+//  - state layers por alpha (pressed/hover) como no M3.
+//
+// Uso: import { Theme } from "theme.slint";  ->  Theme.primary, Theme.shape-md...
+
+export global Theme {
+    // ---- superfícies ----
+    in property <color> background: #0f1219;
+    in property <color> surface: #12161f;
+    in property <color> surface-1: #1a1f2b;
+    in property <color> surface-2: #232a38;
+    in property <color> surface-3: #2c3444;
+    in property <color> on-surface: #e2e6f0;
+    in property <color> on-surface-var: #9aa4b8;
+    in property <color> outline: #333c4d;
+    in property <color> outline-var: #232833;
+
+    // ---- cor de marca ----
+    in property <color> primary: #6fd3ff;
+    in property <color> on-primary: #003544;
+    in property <color> primary-container: #004d61;
+    in property <color> on-primary-container: #b8eaff;
+    in property <color> secondary-container: #3a4150;
+    in property <color> on-secondary-container: #d6e4ff;
+    in property <color> tertiary: #ffb77d;
+
+    // ---- semânticas ----
+    in property <color> error: #ffb4ab;
+    in property <color> error-container: #6e1b20;
+    in property <color> on-error-container: #ffd9d5;
+    in property <color> success: #9fe3a0;
+
+    // ---- state layers (M3) ----
+    in property <color> state-pressed: #26ffffff;
+    in property <color> state-hover: #14ffffff;
+
+    // ---- forma ----
+    in property <length> shape-xs: 4px;
+    in property <length> shape-sm: 8px;
+    in property <length> shape-md: 12px;
+    in property <length> shape-lg: 16px;
+    in property <length> shape-xl: 28px;
+
+    // ---- tipografia ----
+    in property <length> type-display: 30px;
+    in property <length> type-headline: 24px;
+    in property <length> type-title: 20px;
+    in property <length> type-body: 16px;
+    in property <length> type-label: 13px;
+    in property <length> type-tiny: 11px;
+
+    // ---- espaço ----
+    in property <length> sp-xs: 4px;
+    in property <length> sp-sm: 8px;
+    in property <length> sp-md: 12px;
+    in property <length> sp-lg: 16px;
+    in property <length> sp-xl: 24px;
+
+    // ---- métricas de chrome ----
+    in property <length> status-h: 30px;
+    in property <length> btn-h: 38px;
+    in property <length> btn-h-sm: 34px;
+    in property <length> row-h: 42px;
+    in property <length> line-h: 22px;   // editor (espelha main.cpp ED_LINE_H)
+}

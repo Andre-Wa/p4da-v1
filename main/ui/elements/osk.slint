@@ -1,0 +1,83 @@
+// elements/osk.slint — teclado virtual (teclas via KeyCap do design system)
+import { Theme } from "../theme.slint";
+import { KeyCap } from "buttons.slint";
+
+export component OnScreenKeyboard inherits Rectangle {
+    in property <[string]> r0;
+    in property <[string]> r1;
+    in property <[string]> r2;
+    in property <[string]> r3;
+    in property <bool> shift;
+    callback key(string);   // char imprimível ou token: BACKSPACE/ENTER/SPACE/
+                            // LEFT/RIGHT/UP/DOWN/HOME/END/DEL/SHIFT/HIDE
+    callback shift-changed(bool);
+
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.outline-var;
+    border-radius: Theme.shape-md;
+
+    VerticalLayout {
+        padding: 6px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 5px;
+            vertical-stretch: 1;
+            for c in root.r0: KeyCap {
+                horizontal-stretch: 1;
+                label: c;
+                code: c;
+                hit(k) => { root.key(k); }
+            }
+        }
+        HorizontalLayout {
+            spacing: 5px;
+            vertical-stretch: 1;
+            for c in root.r1: KeyCap {
+                horizontal-stretch: 1;
+                label: c;
+                code: c;
+                hit(k) => { root.key(k); }
+            }
+        }
+        HorizontalLayout {
+            spacing: 5px;
+            vertical-stretch: 1;
+            KeyCap {
+                width: 64px;
+                label: root.shift ? "SHIFT*" : "SHIFT";
+                code: "SHIFT";
+                tint: Theme.surface-3;
+                fg: Theme.primary;
+                hit(k) => { root.shift-changed(!root.shift); }
+            }
+            for c in root.r2: KeyCap {
+                horizontal-stretch: 1;
+                label: c;
+                code: c;
+                hit(k) => { root.key(k); }
+            }
+            KeyCap {
+                width: 64px;
+                label: "<-";
+                code: "BACKSPACE";
+                tint: Theme.error-container;
+                fg: Theme.on-error-container;
+                hit(k) => { root.key(k); }
+            }
+        }
+        HorizontalLayout {
+            spacing: 5px;
+            vertical-stretch: 1;
+            KeyCap { width: 52px; label: "<"; code: "LEFT";  tint: Theme.surface-3; hit(k) => { root.key(k); } }
+            KeyCap { width: 52px; label: ">"; code: "RIGHT"; tint: Theme.surface-3; hit(k) => { root.key(k); } }
+            KeyCap { width: 52px; label: "^"; code: "UP";    tint: Theme.surface-3; hit(k) => { root.key(k); } }
+            KeyCap { width: 52px; label: "v"; code: "DOWN";  tint: Theme.surface-3; hit(k) => { root.key(k); } }
+            KeyCap { horizontal-stretch: 1; label: "espaco"; code: "SPACE"; hit(k) => { root.key(k); } }
+            KeyCap { width: 70px; label: "del"; code: "DEL"; tint: Theme.surface-3; hit(k) => { root.key(k); } }
+            KeyCap { width: 70px; label: "enter"; code: "ENTER"; tint: Theme.primary-container; fg: Theme.on-primary-container; hit(k) => { root.key(k); } }
+            KeyCap { width: 52px; label: "ok"; code: "HIDE"; tint: Theme.surface-3; fg: Theme.on-surface-var; hit(k) => { root.key(k); } }
+        }
+    }
+}

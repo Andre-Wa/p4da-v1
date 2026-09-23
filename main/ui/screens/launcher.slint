@@ -1,0 +1,43 @@
+// screens/launcher.slint — menu principal (tiles M3 expressive adaptados)
+import { Theme } from "../theme.slint";
+import { TonalButton } from "../elements/buttons.slint";
+
+export component LauncherScreen inherits Rectangle {
+    callback open-app(string);
+
+    VerticalLayout {
+        padding: Theme.sp-lg;
+        spacing: Theme.sp-md;
+
+        Text {
+            text: "PDA";
+            font-size: Theme.type-display;
+            font-weight: 700;
+            color: Theme.on-surface;
+            horizontal-alignment: center;
+        }
+
+        GridLayout {
+            spacing: Theme.sp-md;
+            Row {
+                TonalButton { height: 64px; fsize: Theme.type-title; text: "Notas"; clicked => { root.open-app("Notas"); } }
+                TonalButton { height: 64px; fsize: Theme.type-title; text: "Arquivos"; clicked => { root.open-app("Arquivos"); } }
+                TonalButton { height: 64px; fsize: Theme.type-title; text: "Scripts"; clicked => { root.open-app("Scripts"); } }
+                TonalButton { height: 64px; fsize: Theme.type-title; text: "Config"; clicked => { root.open-app("Config"); } }
+            }
+            Row {
+                TonalButton { height: 64px; fsize: Theme.type-title; enabled: false; text: "Música"; clicked => { root.open-app("Musica"); } }
+                TonalButton { height: 64px; fsize: Theme.type-title; enabled: false; text: "Agenda"; clicked => { root.open-app("Agenda"); } }
+                TonalButton { height: 64px; fsize: Theme.type-title; enabled: false; text: "Contatos"; clicked => { root.open-app("Contatos"); } }
+                TonalButton { height: 64px; fsize: Theme.type-title; enabled: false; text: "Relógio"; clicked => { root.open-app("Relogio"); } }
+            }
+        }
+
+        Text {
+            text: "Cinza = chega nas próximas fases (ver docs/ROADMAP.md)";
+            font-size: Theme.type-label;
+            color: Theme.on-surface-var;
+            horizontal-alignment: center;
+        }
+    }
+}

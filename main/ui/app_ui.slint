@@ -1,6 +1,17 @@
-// app_ui.slint — UI do PDA (800x480 paisagem)
-// M2: editor com cursor + teclado virtual + abrir qualquer texto.
-import { ListView, Slider, CheckBox } from "std-widgets.slint";
+// app_ui.slint — janela principal: status bar + roteador de telas
+//
+// Este arquivo é a ENTRADA do Slint (slint_target_sources no CMake) e dona
+// da API pública usada pelo main.cpp (propriedades/callbacks `ed-*`,
+// `cfg-*`, `file-*` etc.). As telas vivem em screens/*.slint e os tokens
+// em theme.slint — mexa lá sem tocar aqui (e vice-versa).
+import { Theme } from "theme.slint";
+import { Divider } from "elements/surfaces.slint";
+import { LauncherScreen } from "screens/launcher.slint";
+import { FileManagerScreen } from "screens/files.slint";
+import { NotesListScreen } from "screens/notes.slint";
+import { EditorScreen } from "screens/editor.slint";
+import { ScriptsScreen } from "screens/scripts.slint";
+import { SettingsScreen } from "screens/settings.slint";
 
 export enum AppState {
     Launcher,
@@ -11,543 +22,32 @@ export enum AppState {
     Settings,
 }
 
-// ---------------------------------------------------------------- botões
-component AppButton inherits Rectangle {
-    in property <string> text;
-    in property <bool> enabled: true;
-    callback clicked;
-
-    border-radius: 12px;
-    background: !root.enabled ? #171b24 : (touch-area.pressed ? #2a3140 : #1d2330);
-    border-width: 1px;
-    border-color: !root.enabled ? #232833 : (touch-area.pressed ? #4a90d9 : #333c4d);
-
-    Text {
-        text: root.text;
-        font-size: 20px;
-        color: root.enabled ? white : #4a5261;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-
-    touch-area := TouchArea {
-        enabled: root.enabled;
-        clicked => { root.clicked(); }
-    }
-}
-
-component SmallButton inherits Rectangle {
-    in property <string> text;
-    in property <color> tint: #4a90d9;
-    in property <length> fsize: 15px;
-    callback clicked;
-    border-radius: 8px;
-    background: touch-area.pressed ? #2d6a9f : root.tint;
-    Text {
-        text: root.text;
-        color: white;
-        font-size: root.fsize;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-    touch-area := TouchArea { clicked => { root.clicked(); } }
-}
-
-// ---------------------------------------------------------------- launcher
-component LauncherScreen inherits Rectangle {
-    callback open-app(string);
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 14px;
-
-        Text {
-            text: "PDA — Menu Principal";
-            font-size: 26px;
-            font-weight: 700;
-            color: white;
-            horizontal-alignment: center;
-        }
-
-        GridLayout {
-            spacing: 12px;
-            Row {
-                AppButton { text: "Notas"; clicked => { root.open-app("Notas"); } }
-                AppButton { text: "Arquivos"; clicked => { root.open-app("Arquivos"); } }
-                AppButton { text: "Scripts"; clicked => { root.open-app("Scripts"); } }
-                AppButton { text: "Config"; clicked => { root.open-app("Config"); } }
-            }
-            Row {
-                AppButton { text: "Música"; enabled: false; clicked => { root.open-app("Musica"); } }
-                AppButton { text: "Agenda"; enabled: false; clicked => { root.open-app("Agenda"); } }
-                AppButton { text: "Contatos"; enabled: false; clicked => { root.open-app("Contatos"); } }
-                AppButton { text: "Relógio"; enabled: false; clicked => { root.open-app("Relogio"); } }
-            }
-        }
-
-        Text {
-            text: "Cinza = chega nas próximas fases (ver docs/ROADMAP.md)";
-            font-size: 13px;
-            color: #6b7688;
-            horizontal-alignment: center;
-        }
-    }
-}
-
-// ---------------------------------------------------------------- arquivos
-component FileManagerScreen inherits Rectangle {
-    in property <[string]> entries;
-    in property <[bool]> entries-is-dir;
-    in property <string> current-path;
-    callback open-entry(string);
-    callback request-dir(string);
-    callback go-up();
-    callback go-back();
-    callback refresh();
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 12px;
-
-        HorizontalLayout {
-            spacing: 10px;
-            Text {
-                text: root.current-path;
-                font-size: 17px;
-                color: #7fdbff;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-                overflow: elide;
-            }
-            SmallButton { width: 70px; height: 36px; text: "Att"; clicked => { root.refresh(); } }
-            SmallButton { width: 70px; height: 36px; text: "Sobe"; clicked => { root.go-up(); } }
-            SmallButton { width: 90px; height: 36px; text: "Voltar"; tint: #d9534f; clicked => { root.go-back(); } }
-        }
-
-        Rectangle {
-            background: #1d2330;
-            border-radius: 8px;
-            vertical-stretch: 1;
-
-            ListView {
-                width: 100%;
-                height: 100%;
-                for entry[i] in root.entries: TouchArea {
-                    height: 42px;
-                    clicked => { root.open-entry(entry); }
-                    Rectangle {
-                        background: parent.pressed ? #2a3140 : transparent;
-                        Text {
-                            x: 12px;
-                            text: root.entries-is-dir[i] ? "> " + entry : "    " + entry;
-                            color: root.entries-is-dir[i] ? #9fe3a0 : #cfe3ff;
-                            font-size: 18px;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                        Rectangle { y: parent.height - 1px; height: 1px; background: #333c4d; }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- notas
-component NotesListScreen inherits Rectangle {
-    in property <[string]> notes;
-    callback go-back();
-    callback open-note(string);
-    callback new-note();
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 12px;
-
-        HorizontalLayout {
-            spacing: 10px;
-            Text { text: "Notas"; font-size: 24px; font-weight: 700; color: white;
-                   vertical-alignment: center; horizontal-stretch: 1; }
-            SmallButton { width: 120px; height: 38px; text: "+ Nova nota"; clicked => { root.new-note(); } }
-            SmallButton { width: 90px; height: 38px; text: "Voltar"; tint: #d9534f; clicked => { root.go-back(); } }
-        }
-
-        Rectangle {
-            background: #1d2330;
-            border-radius: 8px;
-            vertical-stretch: 1;
-            ListView {
-                width: 100%;
-                height: 100%;
-                for note in root.notes: TouchArea {
-                    height: 44px;
-                    clicked => { root.open-note(note); }
-                    Rectangle {
-                        background: parent.pressed ? #2a3140 : transparent;
-                        Text { x: 12px; text: note; color: #7fdbff; font-size: 18px; vertical-alignment: center; }
-                        Rectangle { y: parent.height - 1px; height: 1px; background: #333c4d; }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- teclado virtual
-component OSKKey inherits Rectangle {
-    in property <string> label;
-    in property <string> code;
-    in property <color> tint: #2a3140;
-    callback hit(string);
-    border-radius: 6px;
-    background: ta.pressed ? #4a90d9 : root.tint;
-    Text { text: root.label; color: white; font-size: 15px;
-           horizontal-alignment: center; vertical-alignment: center; }
-    ta := TouchArea { clicked => { root.hit(root.code); } }
-}
-
-
-component OnScreenKeyboard inherits Rectangle {
-    in property <[string]> r0;
-    in property <[string]> r1;
-    in property <[string]> r2;
-    in property <[string]> r3;
-    in property <bool> shift;
-    callback key(string);          // caractere imprimível ou token: BACKSPACE/ENTER/SPACE/LEFT/RIGHT/UP/DOWN/HOME/END/DEL/SHIFT/HIDE
-    callback shift-changed(bool);
-
-    background: #0d1016;
-    border-width: 1px;
-    border-color: #333c4d;
-
-    VerticalLayout {
-        padding: 6px;
-        spacing: 6px;
-
-        HorizontalLayout {
-            spacing: 5px;
-            for c in root.r0: OSKKey {
-                horizontal-stretch: 1;
-                label: c;
-                code: c;
-                hit(k) => { root.key(k); }
-            }
-        }
-        HorizontalLayout {
-            spacing: 5px;
-            for c in root.r1: OSKKey {
-                horizontal-stretch: 1;
-                label: c;
-                code: c;
-                hit(k) => { root.key(k); }
-            }
-        }
-        HorizontalLayout {
-            spacing: 5px;
-            for c in root.r2: OSKKey {
-                horizontal-stretch: 1;
-                label: c;
-                code: c;
-                hit(k) => { root.key(k); }
-            }
-        }
-        HorizontalLayout {
-            spacing: 5px;
-            OSKKey { width: 64px; label: root.shift ? "SHIFT*" : "SHIFT"; code: "SHIFT"; tint: #3a4150;
-                  hit(k) => { root.shift-changed(!root.shift); } }
-            for c in root.r3: OSKKey {
-                horizontal-stretch: 1;
-                label: c;
-                code: c;
-                hit(k) => { root.key(k); }
-            }
-            OSKKey { width: 64px; label: "<-"; code: "BACKSPACE"; tint: #8B0000; hit(k) => { root.key(k); } }
-        }
-        HorizontalLayout {
-            spacing: 5px;
-            OSKKey { width: 52px; label: "<"; code: "LEFT";  tint: #3a4150; hit(k) => { root.key(k); } }
-            OSKKey { width: 52px; label: ">"; code: "RIGHT"; tint: #3a4150; hit(k) => { root.key(k); } }
-            OSKKey { width: 52px; label: "^"; code: "UP";    tint: #3a4150; hit(k) => { root.key(k); } }
-            OSKKey { width: 52px; label: "v"; code: "DOWN";  tint: #3a4150; hit(k) => { root.key(k); } }
-            OSKKey { horizontal-stretch: 1; label: "espaco"; code: "SPACE"; hit(k) => { root.key(k); } }
-            OSKKey { width: 70px; label: "del"; code: "DEL"; tint: #3a4150; hit(k) => { root.key(k); } }
-            OSKKey { width: 70px; label: "enter"; code: "ENTER"; tint: #2d6a9f; hit(k) => { root.key(k); } }
-            OSKKey { width: 52px; label: "ok"; code: "HIDE"; tint: #4d5566; hit(k) => { root.key(k); } }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- editor
-component EditorScreen inherits Rectangle {
-    in property <string> title;
-    in property <[string]> lines;      // linhas de exibição (cursor embutido)
-    in property <int> line-count;
-    in property <length> content-w: 780px;
-    in property <bool> dirty;
-    in property <bool> can-delete;
-    in property <bool> show-osk;
-    in property <bool> osk-shift;
-    in property <[string]> osk-r0;
-    in property <[string]> osk-r1;
-    in property <[string]> osk-r2;
-    in property <[string]> osk-r3;
-    in-out property <length> scroll-y: 0px;
-    in-out property <length> scroll-x: 0px;
-    callback line-tapped(int);
-    callback osk-key(string);
-    callback osk-shift-changed(bool);
-    callback save();
-    callback delete-file();
-    callback toggle-osk();
-    callback go-back();
-
-    property <int> line-h: 22;
-
-    VerticalLayout {
-        padding: 8px;
-        spacing: 6px;
-
-        HorizontalLayout {
-            spacing: 8px;
-            Text {
-                text: root.title + (root.dirty ? " *" : "");
-                font-size: 17px;
-                font-weight: 700;
-                color: white;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-                overflow: elide;
-            }
-            SmallButton { width: 80px; height: 34px; text: "Salvar"; clicked => { root.save(); } }
-            if root.can-delete: SmallButton { width: 80px; height: 34px; text: "Apagar"; tint: #d9534f; clicked => { root.delete-file(); } }
-            SmallButton { width: 80px; height: 34px; text: "Tecl"; tint: #4d5566; clicked => { root.toggle-osk(); } }
-            SmallButton { width: 80px; height: 34px; text: "Voltar"; tint: #4d5566; clicked => { root.go-back(); } }
-        }
-
-        Rectangle {
-            background: #1d2330;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: #333c4d;
-            vertical-stretch: 1;
-            clip: true;
-
-            Flickable {
-                width: 100%;
-                height: 100%;
-                viewport-height: root.line-count * root.line-h * 1px + 40px;
-                viewport-width: root.content-w;
-                viewport-y <=> root.scroll-y;
-                viewport-x <=> root.scroll-x;
-
-                VerticalLayout {
-                    spacing: 0px;
-                    for line[i] in root.lines: Rectangle {
-                        height: root.line-h * 1px;
-                        width: root.content-w;
-                        TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            clicked => { root.line-tapped(i); }
-                        }
-                        Text {
-                            x: 6px;
-                            text: line;
-                            font-size: 16px;
-                            color: #e8ecf4;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                }
-            }
-        }
-
-        if root.show-osk: OnScreenKeyboard {
-            height: 190px;
-            r0: root.osk-r0;
-            r1: root.osk-r1;
-            r2: root.osk-r2;
-            r3: root.osk-r3;
-            shift: root.osk-shift;
-            key(k) => { root.osk-key(k); }
-            shift-changed(s) => { root.osk-shift-changed(s); }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- scripts
-component ScriptsScreen inherits Rectangle {
-    in property <[string]> scripts;
-    in property <[string]> log;
-    callback run-script(string);
-    callback clear-log();
-    callback refresh();
-    callback go-back();
-
-    HorizontalLayout {
-        padding: 16px;
-        spacing: 14px;
-
-        VerticalLayout {
-            width: 260px;
-            spacing: 10px;
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Scripts"; font-size: 22px; font-weight: 700; color: white;
-                       vertical-alignment: center; horizontal-stretch: 1; }
-                SmallButton { width: 44px; height: 34px; text: "Att"; clicked => { root.refresh(); } }
-            }
-            Rectangle {
-                background: #1d2330;
-                border-radius: 8px;
-                vertical-stretch: 1;
-                ListView {
-                    width: 100%;
-                    height: 100%;
-                    for s in root.scripts: TouchArea {
-                        height: 40px;
-                        clicked => { root.run-script(s); }
-                        Rectangle {
-                            background: parent.pressed ? #2a3140 : transparent;
-                            Text { x: 10px; text: s; color: #9fe3a0; font-size: 16px; vertical-alignment: center; }
-                            Rectangle { y: parent.height - 1px; height: 1px; background: #333c4d; }
-                        }
-                    }
-                }
-            }
-        }
-
-        VerticalLayout {
-            horizontal-stretch: 1;
-            spacing: 10px;
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Console"; font-size: 18px; color: white; vertical-alignment: center;
-                       horizontal-stretch: 1; }
-                SmallButton { width: 90px; height: 34px; text: "Limpar"; tint: #4d5566; clicked => { root.clear-log(); } }
-                SmallButton { width: 90px; height: 34px; text: "Voltar"; tint: #d9534f; clicked => { root.go-back(); } }
-            }
-            Rectangle {
-                background: #10141b;
-                border-radius: 8px;
-                vertical-stretch: 1;
-                ListView {
-                    width: 100%;
-                    height: 100%;
-                    for line in root.log: Text {
-                        height: 22px;
-                        x: 8px;
-                        text: line;
-                        color: #d0d6e2;
-                        font-size: 14px;
-                        overflow: elide;
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- config
-component SettingsScreen inherits Rectangle {
-    in-out property <float> brightness: 80;
-    in-out property <float> dim-s: 30;
-    in-out property <float> off-s: 120;
-    in-out property <float> deep-s: 0;
-    in-out property <bool> wake-touch: false;
-    in-out property <bool> osk-auto: true;
-    in property <string> store-info;
-    in property <string> battery-info;
-    callback save();
-    callback reset();
-    callback sleep-now();
-    callback hibernate();
-    callback go-back();
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 10px;
-
-        HorizontalLayout {
-            spacing: 10px;
-            Text { text: "Configurações"; font-size: 24px; font-weight: 700; color: white;
-                   vertical-alignment: center; horizontal-stretch: 1; }
-            SmallButton { width: 100px; height: 38px; text: "Salvar"; clicked => { root.save(); } }
-            SmallButton { width: 90px; height: 38px; text: "Voltar"; tint: #d9534f; clicked => { root.go-back(); } }
-        }
-
-        GridLayout {
-            spacing: 10px;
-            Row {
-                Text { text: "Brilho: " + root.brightness; color: #cfe3ff; font-size: 16px; vertical-alignment: center; }
-                Slider { minimum: 0; maximum: 100; value <=> root.brightness; horizontal-stretch: 1; }
-            }
-            Row {
-                Text { text: "Dimerizar após (s): " + root.dim-s; color: #cfe3ff; font-size: 16px; vertical-alignment: center; }
-                Slider { minimum: 5; maximum: 600; value <=> root.dim-s; horizontal-stretch: 1; }
-            }
-            Row {
-                Text { text: "Standby após (s): " + root.off-s; color: #cfe3ff; font-size: 16px; vertical-alignment: center; }
-                Slider { minimum: 10; maximum: 1800; value <=> root.off-s; horizontal-stretch: 1; }
-            }
-            Row {
-                Text { text: "Hibernar após (s, 0=off): " + root.deep-s; color: #cfe3ff; font-size: 16px; vertical-alignment: center; }
-                Slider { minimum: 0; maximum: 7200; value <=> root.deep-s; horizontal-stretch: 1; }
-            }
-        }
-
-        HorizontalLayout {
-            spacing: 24px;
-            CheckBox { text: "Acordar por toque (HW?)"; checked <=> root.wake-touch; }
-            CheckBox { text: "Teclado virtual só sem USB"; checked <=> root.osk-auto; }
-        }
-
-        HorizontalLayout {
-            spacing: 10px;
-            Text { text: "Armazenamento: " + root.store-info + "   Bateria: " + root.battery-info;
-                   font-size: 14px; color: #6b7688; vertical-alignment: center; horizontal-stretch: 1; }
-            SmallButton { width: 110px; height: 36px; text: "Dormir agora"; tint: #4d5566; clicked => { root.sleep-now(); } }
-            SmallButton { width: 100px; height: 36px; text: "Hibernar"; tint: #8B0000; clicked => { root.hibernate(); } }
-            SmallButton { width: 90px; height: 36px; text: "Padrão"; tint: #4d5566; clicked => { root.reset(); } }
-        }
-
-        Text {
-            text: "Salvar grava em config/system.lua (cartão SD quando presente). Hibernar = desligar com sessão restaurada no próximo boot.";
-            font-size: 12px;
-            color: #6b7688;
-            wrap: word-wrap;
-        }
-    }
-}
-
-// ---------------------------------------------------------------- janela
 export component AppWindow inherits Window {
     width: 800px;
     height: 480px;
-    background: #14181f;
+    background: Theme.background;
 
     in-out property <AppState> active-app: AppState.Launcher;
 
-    // status bar
+    // ---- status bar ----
     in property <string> status-clock: "--:--";
     in property <string> status-store: "...";
     in property <string> status-batt: "--";
     in property <string> status-pwr: "";
     callback tick();
 
-    // arquivos
+    // ---- arquivos ----
     in property <[string]> file-entries;
     in property <[bool]> file-is-dir;
     in property <string> file-path: "";
     callback request-dir(string);
     callback dir-up();
 
-    // notas
+    // ---- notas ----
     in property <[string]> notes-list;
     callback request-notes-list();
 
-    // editor
+    // ---- editor ----
     in property <string> ed-title: "";
     in property <[string]> ed-lines;
     in property <int> ed-line-count: 0;
@@ -566,18 +66,18 @@ export component AppWindow inherits Window {
     callback ed-line-tapped(int);
     callback ed-osk-key(string);
     callback ed-osk-shift-set(bool);
+    callback ed-toggle-osk();
     callback ed-save();
     callback ed-delete();
-    callback ed-toggle-osk();
 
-    // scripts
+    // ---- scripts ----
     in property <[string]> scripts-list;
     in property <[string]> script-log;
     callback request-scripts();
     callback run-script(string);
     callback clear-script-log();
 
-    // config
+    // ---- config ----
     in-out property <float> cfg-brightness: 80;
     in-out property <float> cfg-dim-s: 30;
     in-out property <float> cfg-off-s: 120;
@@ -602,23 +102,24 @@ export component AppWindow inherits Window {
         spacing: 0px;
 
         Rectangle {
-            height: 30px;
-            background: #0d1016;
+            height: Theme.status-h;
+            background: Theme.surface-1;
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                spacing: 18px;
-                Text { text: root.status-clock; color: #7fdbff; font-size: 14px; vertical-alignment: center; }
-                Text { text: root.status-store; color: #9fe3a0; font-size: 14px; vertical-alignment: center; }
-                Text { text: "bat: " + root.status-batt; color: #e3c79f; font-size: 14px; vertical-alignment: center; }
-                Text { text: root.status-pwr; color: #6b7688; font-size: 14px; vertical-alignment: center;
+                padding-left: Theme.sp-md;
+                padding-right: Theme.sp-md;
+                spacing: Theme.sp-lg;
+                Text { text: root.status-clock; color: Theme.primary; font-size: Theme.type-label; vertical-alignment: center; }
+                Text { text: root.status-store; color: Theme.success; font-size: Theme.type-label; vertical-alignment: center; }
+                Text { text: "bat: " + root.status-batt; color: Theme.tertiary; font-size: Theme.type-label; vertical-alignment: center; }
+                Text { text: root.status-pwr; color: Theme.on-surface-var; font-size: Theme.type-label; vertical-alignment: center;
                        horizontal-stretch: 1; horizontal-alignment: right; }
             }
         }
+        Divider { }
 
         Rectangle {
             vertical-stretch: 1;
-            background: #14181f;
+            background: Theme.background;
 
             if (root.active-app == AppState.Launcher) : LauncherScreen {
                 width: 100%;

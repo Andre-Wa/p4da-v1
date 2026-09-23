@@ -1,0 +1,26 @@
+// elements/surfaces.slint — superfícies e divisores do design system
+import { Theme } from "../theme.slint";
+
+// Superfície tonal (M3): level 1..3 sobe o "elevation" de cor.
+export component Surface inherits Rectangle {
+    in property <int> level: 1;
+    border-radius: Theme.shape-md;
+    background: root.level <= 1 ? Theme.surface-1
+              : root.level == 2 ? Theme.surface-2
+              : Theme.surface-3;
+}
+
+export component Divider inherits Rectangle {
+    height: 1px;
+    background: Theme.outline-var;
+}
+
+// Título de tela (headline M3 adaptado)
+export component ScreenTitle inherits Text {
+    in property <string> label;
+    text: root.label;
+    font-size: Theme.type-headline;
+    font-weight: 700;
+    color: Theme.on-surface;
+    vertical-alignment: center;
+}

@@ -1,0 +1,92 @@
+// screens/scripts.slint — lista de scripts Lua + console
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { TonalButton, GhostButton } from "../elements/buttons.slint";
+import { Surface, ScreenTitle } from "../elements/surfaces.slint";
+
+export component ScriptsScreen inherits Rectangle {
+    in property <[string]> scripts;
+    in property <[string]> log;
+    callback run-script(string);
+    callback clear-log();
+    callback refresh();
+    callback go-back();
+
+    HorizontalLayout {
+        padding: Theme.sp-lg;
+        spacing: Theme.sp-md;
+
+        VerticalLayout {
+            width: 260px;
+            spacing: Theme.sp-sm;
+            HorizontalLayout {
+                spacing: Theme.sp-sm;
+                ScreenTitle { label: "Scripts"; horizontal-stretch: 1; }
+                TonalButton { width: 44px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Att"; clicked => { root.refresh(); } }
+            }
+            Surface {
+                level: 1;
+                vertical-stretch: 1;
+                clip: true;
+                ListView {
+                    width: 100%;
+                    height: 100%;
+                    for s in root.scripts: Rectangle {
+                        height: 40px;
+                        clip: true;
+                        Text {
+                            x: Theme.sp-sm;
+                            text: s;
+                            color: Theme.success;
+                            font-size: Theme.type-body;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            width: 100%;
+                            height: 100%;
+                            background: Theme.state-pressed;
+                            visible: ta.pressed;
+                        }
+                        ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => { root.run-script(s); }
+                        }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.outline-var; }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: Theme.sp-sm;
+            HorizontalLayout {
+                spacing: Theme.sp-sm;
+                ScreenTitle { label: "Console"; horizontal-stretch: 1; }
+                GhostButton { width: 90px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Limpar"; clicked => { root.clear-log(); } }
+                GhostButton { width: 90px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Voltar"; clicked => { root.go-back(); } }
+            }
+            Rectangle {
+                background: Theme.background;
+                border-radius: Theme.shape-md;
+                border-width: 1px;
+                border-color: Theme.outline-var;
+                vertical-stretch: 1;
+                clip: true;
+                ListView {
+                    width: 100%;
+                    height: 100%;
+                    for line in root.log: Text {
+                        height: 22px;
+                        x: Theme.sp-sm;
+                        text: line;
+                        color: Theme.on-surface-var;
+                        font-size: Theme.type-label;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+    }
+}

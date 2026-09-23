@@ -1,0 +1,160 @@
+// elements/buttons.slint — família de botões do design system
+//
+// Variantes M3 adaptadas: filled (ação primária), tonal (secundária),
+// danger (destrutiva), ghost (neutra/contorno). State layer de pressed
+// por cima, como no Material.
+import { Theme } from "../theme.slint";
+
+export component FilledButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <length> h: Theme.btn-h;
+    in property <length> fsize: Theme.type-body;
+    callback clicked;
+
+    height: root.h;
+    border-radius: Theme.shape-lg;
+    background: root.enabled ? Theme.primary : Theme.surface-2;
+    clip: true;
+
+    Text {
+        text: root.text;
+        font-size: root.fsize;
+        font-weight: 700;
+        color: root.enabled ? Theme.on-primary : Theme.on-surface-var;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.state-pressed;
+        visible: ta.pressed && root.enabled;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component TonalButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <length> h: Theme.btn-h;
+    in property <length> fsize: Theme.type-body;
+    callback clicked;
+
+    height: root.h;
+    border-radius: Theme.shape-lg;
+    background: root.enabled ? Theme.secondary-container : Theme.surface-2;
+    clip: true;
+
+    Text {
+        text: root.text;
+        font-size: root.fsize;
+        color: root.enabled ? Theme.on-secondary-container : Theme.on-surface-var;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.state-pressed;
+        visible: ta.pressed && root.enabled;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component DangerButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <length> h: Theme.btn-h;
+    in property <length> fsize: Theme.type-body;
+    callback clicked;
+
+    height: root.h;
+    border-radius: Theme.shape-lg;
+    background: root.enabled ? Theme.error-container : Theme.surface-2;
+    border-width: 1px;
+    border-color: root.enabled ? Theme.error : Theme.outline-var;
+    clip: true;
+
+    Text {
+        text: root.text;
+        font-size: root.fsize;
+        color: root.enabled ? Theme.on-error-container : Theme.on-surface-var;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.state-pressed;
+        visible: ta.pressed && root.enabled;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component GhostButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <length> h: Theme.btn-h;
+    in property <length> fsize: Theme.type-body;
+    callback clicked;
+
+    height: root.h;
+    border-radius: Theme.shape-lg;
+    background: ta.pressed && root.enabled ? Theme.state-pressed : transparent;
+    border-width: 1px;
+    border-color: root.enabled ? Theme.outline : Theme.outline-var;
+
+    Text {
+        text: root.text;
+        font-size: root.fsize;
+        color: root.enabled ? Theme.on-surface-var : Theme.on-surface-var;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Tecla do teclado virtual (usada pelo OSK)
+export component KeyCap inherits Rectangle {
+    in property <string> label;
+    in property <string> code;
+    in property <color> tint: Theme.surface-2;
+    in property <color> fg: Theme.on-surface;
+    in property <length> fsize: 15px;
+    callback hit(string);
+
+    border-radius: Theme.shape-sm;
+    background: root.tint;
+    clip: true;
+
+    Text {
+        text: root.label;
+        color: root.fg;
+        font-size: root.fsize;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.state-pressed;
+        visible: ta.pressed;
+        opacity: 5%;
+    }
+    ta := TouchArea {
+        clicked => { root.hit(root.code); }
+    }
+}

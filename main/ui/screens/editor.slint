@@ -1,0 +1,98 @@
+// screens/editor.slint — editor com cursor + OSK ancorado embaixo
+import { Theme } from "../theme.slint";
+import { FilledButton, TonalButton, DangerButton, GhostButton } from "../elements/buttons.slint";
+import { Surface } from "../elements/surfaces.slint";
+import { OnScreenKeyboard } from "../elements/osk.slint";
+
+export component EditorScreen inherits Rectangle {
+    in property <string> title;
+    in property <[string]> lines;        // linhas de exibição (cursor "|" embutido)
+    in property <int> line-count;
+    in property <length> content-w: 780px;
+    in property <bool> dirty;
+    in property <bool> can-delete;
+    in property <bool> show-osk;
+    in property <bool> osk-shift;
+    in property <[string]> osk-r0;
+    in property <[string]> osk-r1;
+    in property <[string]> osk-r2;
+    in property <[string]> osk-r3;
+    in-out property <length> scroll-y: 0px;
+    in-out property <length> scroll-x: 0px;
+    callback line-tapped(int);
+    callback osk-key(string);
+    callback osk-shift-changed(bool);
+    callback save();
+    callback delete-file();
+    callback toggle-osk();
+    callback go-back();
+
+    VerticalLayout {
+        padding: Theme.sp-sm;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: Theme.sp-sm;
+            Text {
+                text: root.title + (root.dirty ? " *" : "");
+                font-size: Theme.type-title;
+                font-weight: 700;
+                color: root.dirty ? Theme.tertiary : Theme.on-surface;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            FilledButton { width: 80px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Salvar"; clicked => { root.save(); } }
+            if root.can-delete: DangerButton { width: 80px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Apagar"; clicked => { root.delete-file(); } }
+            TonalButton { width: 80px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Tecl"; clicked => { root.toggle-osk(); } }
+            GhostButton { width: 80px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Voltar"; clicked => { root.go-back(); } }
+        }
+
+        Surface {
+            level: 1;
+            vertical-stretch: 1;
+            clip: true;
+
+            Flickable {
+                width: 100%;
+                height: 100%;
+                viewport-height: root.line-count * Theme.line-h + 40px;
+                viewport-width: root.content-w;
+                viewport-y <=> root.scroll-y;
+                viewport-x <=> root.scroll-x;
+
+                VerticalLayout {
+                    spacing: 0px;
+                    for line[i] in root.lines: Rectangle {
+                        height: Theme.line-h;
+                        width: root.content-w;
+                        TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => { root.line-tapped(i); }
+                        }
+                        Text {
+                            x: 6px;
+                            text: line;
+                            font-size: Theme.type-body;
+                            color: Theme.on-surface;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.show-osk: OnScreenKeyboard {
+            height: 190px;
+            r0: root.osk-r0;
+            r1: root.osk-r1;
+            r2: root.osk-r2;
+            r3: root.osk-r3;
+            shift: root.osk-shift;
+            key(k) => { root.osk-key(k); }
+            shift-changed(s) => { root.osk-shift-changed(s); }
+        }
+    }
+}

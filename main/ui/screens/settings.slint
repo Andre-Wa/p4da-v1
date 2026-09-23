@@ -1,0 +1,90 @@
+// screens/settings.slint — configurações do sistema (gravadas em Lua)
+import { Slider, CheckBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { FilledButton, TonalButton, DangerButton, GhostButton } from "../elements/buttons.slint";
+import { ScreenTitle } from "../elements/surfaces.slint";
+
+export component SettingsScreen inherits Rectangle {
+    in-out property <float> brightness: 80;
+    in-out property <float> dim-s: 30;
+    in-out property <float> off-s: 120;
+    in-out property <float> deep-s: 0;
+    in-out property <bool> wake-touch: false;
+    in-out property <bool> osk-auto: true;
+    in property <string> store-info;
+    in property <string> battery-info;
+    callback save();
+    callback reset();
+    callback sleep-now();
+    callback hibernate();
+    callback go-back();
+
+    VerticalLayout {
+        padding: Theme.sp-lg;
+        spacing: Theme.sp-sm;
+
+        HorizontalLayout {
+            spacing: Theme.sp-sm;
+            ScreenTitle { label: "Configurações"; horizontal-stretch: 1; }
+            FilledButton { width: 100px; text: "Salvar"; fsize: Theme.type-label; clicked => { root.save(); } }
+            GhostButton { width: 90px; text: "Voltar"; fsize: Theme.type-label; clicked => { root.go-back(); } }
+        }
+
+        GridLayout {
+            spacing: Theme.sp-sm;
+            Row {
+                Text { text: "Brilho: " + root.brightness; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
+                Slider { minimum: 1; maximum: 100; value <=> root.brightness; horizontal-stretch: 1; }
+            }
+            Row {
+                Text { text: "Dimerizar após (s): " + root.dim-s; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
+                Slider { minimum: 5; maximum: 600; value <=> root.dim-s; horizontal-stretch: 1; }
+            }
+            Row {
+                Text { text: "Standby após (s): " + root.off-s; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
+                Slider { minimum: 10; maximum: 1800; value <=> root.off-s; horizontal-stretch: 1; }
+            }
+            Row {
+                Text { text: "Hibernar após (s, 0=off): " + root.deep-s; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
+                Slider { minimum: 0; maximum: 7200; value <=> root.deep-s; horizontal-stretch: 1; }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: Theme.sp-xl;
+            HorizontalLayout {
+                alignment: start;
+                spacing: Theme.sp-xs;
+                Text { text: "Acordar por toque (HW?)"; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
+                CheckBox { checked <=> root.wake-touch; }
+            }
+            HorizontalLayout {
+                alignment: start;
+                spacing: Theme.sp-xs;
+                Text { text: "Teclado virtual só sem USB"; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
+                CheckBox { checked <=> root.osk-auto; }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: Theme.sp-sm;
+            Text {
+                text: "Armaz.: " + root.store-info + "  Bateria: " + root.battery-info;
+                font-size: Theme.type-label;
+                color: Theme.on-surface-var;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            TonalButton { width: 110px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Dormir agora"; clicked => { root.sleep-now(); } }
+            DangerButton { width: 100px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Hibernar"; clicked => { root.hibernate(); } }
+            GhostButton { width: 90px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Padrão"; clicked => { root.reset(); } }
+        }
+
+        Text {
+            text: "Salvar grava em config/system.lua (cartão SD quando presente). Hibernar = desligar com sessão restaurada no próximo boot.";
+            font-size: Theme.type-tiny;
+            color: Theme.on-surface-var;
+            wrap: word-wrap;
+        }
+    }
+}

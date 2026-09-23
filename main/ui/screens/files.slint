@@ -1,0 +1,71 @@
+// screens/files.slint — gerenciador de arquivos navegável
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { TonalButton, GhostButton } from "../elements/buttons.slint";
+import { Surface, ScreenTitle } from "../elements/surfaces.slint";
+
+export component FileManagerScreen inherits Rectangle {
+    in property <[string]> entries;
+    in property <[bool]> entries-is-dir;
+    in property <string> current-path;
+    callback open-entry(string);
+    callback request-dir(string);
+    callback go-up();
+    callback go-back();
+    callback refresh();
+
+    VerticalLayout {
+        padding: Theme.sp-lg;
+        spacing: Theme.sp-md;
+
+        HorizontalLayout {
+            spacing: Theme.sp-sm;
+            Text {
+                text: root.current-path;
+                font-size: Theme.type-body;
+                color: Theme.primary;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            TonalButton { width: 70px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Att"; clicked => { root.refresh(); } }
+            TonalButton { width: 70px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Sobe"; clicked => { root.go-up(); } }
+            GhostButton { width: 90px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Voltar"; clicked => { root.go-back(); } }
+        }
+
+        Surface {
+            level: 1;
+            vertical-stretch: 1;
+            clip: true;
+
+            ListView {
+                width: 100%;
+                height: 100%;
+                for entry[i] in root.entries: Rectangle {
+                    height: Theme.row-h;
+                    clip: true;
+                    Text {
+                        x: Theme.sp-md;
+                        text: root.entries-is-dir[i] ? "> " + entry : "    " + entry;
+                        color: root.entries-is-dir[i] ? Theme.success : Theme.on-surface;
+                        font-size: Theme.type-body;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Rectangle {
+                        width: 100%;
+                        height: 100%;
+                        background: Theme.state-pressed;
+                        visible: ta.pressed;
+                    }
+                    ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.open-entry(entry); }
+                    }
+                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.outline-var; }
+                }
+            }
+        }
+    }
+}
