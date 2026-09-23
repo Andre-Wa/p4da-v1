@@ -586,21 +586,35 @@ extern "C" void app_main(void)
                 g_ui->set_note_buffer(slint::SharedString(text));
             }
         });
+    },
+    [](bool connected) {
+        ESP_LOGI(TAG, "teclado USB: %s", connected ? "conectado" : "ausente");
+        slint::invoke_from_event_loop([connected]() {
+            activity();
+            g_hid_seen = g_hid_seen || connected;
+            g_ui->set_has_keyboard(connected);
+        });
     });
 
     /* ---------- power ---------- */
     power_mgmt_set_standby_cb([](bool entering, void *) {
-        if (entering) return;
+        if (entering) {
+            /* DWC2 não sobrevive ao light sleep: teardown ordenado antes. */
+            usb_hid_keyboard_prepare_sleep();
+            return;
+        }
         /* Acordou: o periférico SDMMC não sobrevive ao light sleep
          * (host fica surdo: sdmmc_host_wait_for_event 0x107), então
          * remontamos ANTES de qualquer I/O voltar a acontecer. */
         storage_remount_sd();
+        usb_hid_keyboard_resume();
         slint::invoke_from_event_loop([]() {
             update_clock();
             char buf[96];
             storage_sd_describe(buf, sizeof(buf));
             g_ui->set_status_store(slint::SharedString(buf));
             g_ui->set_cfg_store_info(slint::SharedString(buf));
+            g_ui->set_has_keyboard(usb_hid_keyboard_connected());
         });
     }, NULL);
     power_mgmt_set_hibernate_save_cb(session_save, NULL);
