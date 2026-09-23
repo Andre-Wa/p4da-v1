@@ -13,7 +13,7 @@ export component EditorScreen inherits Rectangle {
     in property <bool> can-delete;
     in property <bool> show-osk;
     in property <bool> osk-shift;
-    in property <[string]> osk-r0;
+    in property <bool> osk-mode;
     in property <[string]> osk-r1;
     in property <[string]> osk-r2;
     in property <[string]> osk-r3;
@@ -85,12 +85,12 @@ export component EditorScreen inherits Rectangle {
         }
 
         if root.show-osk: OnScreenKeyboard {
-            height: 190px;
-            r0: root.osk-r0;
+            height: 168px;
             r1: root.osk-r1;
             r2: root.osk-r2;
             r3: root.osk-r3;
             shift: root.osk-shift;
+            mode: root.osk-mode;
             key(k) => { root.osk-key(k); }
             shift-changed(s) => { root.osk-shift-changed(s); }
         }

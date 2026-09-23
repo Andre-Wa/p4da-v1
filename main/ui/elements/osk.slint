@@ -1,15 +1,21 @@
-// elements/osk.slint — teclado virtual (teclas via KeyCap do design system)
+// elements/osk.slint — teclado virtual (layout "telefone": 3 fileiras de
+// letras + tecla de modo abaixo do SHIFT para números/símbolos)
+//
+// Camadas (espelham o teclado USB do repo, keyboard/key_mapping.md):
+//   mode=abc  + shift off/on : letras minúsculas / MAIÚSCULAS
+//   mode=123  + shift off    : números + símbolos (camada Lower)
+//   mode=123  + shift on     : símbolos alternativos (camada Raise adaptada)
 import { Theme } from "../theme.slint";
 import { KeyCap } from "buttons.slint";
 
 export component OnScreenKeyboard inherits Rectangle {
-    in property <[string]> r0;
     in property <[string]> r1;
     in property <[string]> r2;
     in property <[string]> r3;
     in property <bool> shift;
-    callback key(string);   // char imprimível ou token: BACKSPACE/ENTER/SPACE/
-                            // LEFT/RIGHT/UP/DOWN/HOME/END/DEL/SHIFT/HIDE
+    in property <bool> mode;     // false = abc, true = 123/símbolos
+    callback key(string);        // char imprimível ou token: BACKSPACE/ENTER/
+                                 // SPACE/LEFT/RIGHT/UP/DOWN/HOME/END/DEL/MODE/HIDE
     callback shift-changed(bool);
 
     background: Theme.surface-1;
@@ -24,7 +30,7 @@ export component OnScreenKeyboard inherits Rectangle {
         HorizontalLayout {
             spacing: 5px;
             vertical-stretch: 1;
-            for c in root.r0: KeyCap {
+            for c in root.r1: KeyCap {
                 horizontal-stretch: 1;
                 label: c;
                 code: c;
@@ -34,7 +40,7 @@ export component OnScreenKeyboard inherits Rectangle {
         HorizontalLayout {
             spacing: 5px;
             vertical-stretch: 1;
-            for c in root.r1: KeyCap {
+            for c in root.r2: KeyCap {
                 horizontal-stretch: 1;
                 label: c;
                 code: c;
@@ -52,7 +58,7 @@ export component OnScreenKeyboard inherits Rectangle {
                 fg: Theme.primary;
                 hit(k) => { root.shift-changed(!root.shift); }
             }
-            for c in root.r2: KeyCap {
+            for c in root.r3: KeyCap {
                 horizontal-stretch: 1;
                 label: c;
                 code: c;
@@ -70,14 +76,22 @@ export component OnScreenKeyboard inherits Rectangle {
         HorizontalLayout {
             spacing: 5px;
             vertical-stretch: 1;
-            KeyCap { width: 52px; label: "<"; code: "LEFT";  tint: Theme.surface-3; hit(k) => { root.key(k); } }
-            KeyCap { width: 52px; label: ">"; code: "RIGHT"; tint: Theme.surface-3; hit(k) => { root.key(k); } }
-            KeyCap { width: 52px; label: "^"; code: "UP";    tint: Theme.surface-3; hit(k) => { root.key(k); } }
-            KeyCap { width: 52px; label: "v"; code: "DOWN";  tint: Theme.surface-3; hit(k) => { root.key(k); } }
+            // tecla de modo ABAIXO do SHIFT (como teclado de telefone)
+            KeyCap {
+                width: 64px;
+                label: root.mode ? "abc" : "123";
+                code: "MODE";
+                tint: Theme.surface-3;
+                fg: Theme.primary;
+                hit(k) => { root.key(k); }
+            }
+            KeyCap { width: 44px; label: "<"; code: "LEFT";  tint: Theme.surface-3; hit(k) => { root.key(k); } }
+            KeyCap { width: 44px; label: ">"; code: "RIGHT"; tint: Theme.surface-3; hit(k) => { root.key(k); } }
+            KeyCap { width: 44px; label: "^"; code: "UP";    tint: Theme.surface-3; hit(k) => { root.key(k); } }
+            KeyCap { width: 44px; label: "v"; code: "DOWN";  tint: Theme.surface-3; hit(k) => { root.key(k); } }
             KeyCap { horizontal-stretch: 1; label: "espaco"; code: "SPACE"; hit(k) => { root.key(k); } }
-            KeyCap { width: 70px; label: "del"; code: "DEL"; tint: Theme.surface-3; hit(k) => { root.key(k); } }
             KeyCap { width: 70px; label: "enter"; code: "ENTER"; tint: Theme.primary-container; fg: Theme.on-primary-container; hit(k) => { root.key(k); } }
-            KeyCap { width: 52px; label: "ok"; code: "HIDE"; tint: Theme.surface-3; fg: Theme.on-surface-var; hit(k) => { root.key(k); } }
+            KeyCap { width: 44px; label: "ok"; code: "HIDE"; tint: Theme.surface-3; fg: Theme.on-surface-var; hit(k) => { root.key(k); } }
         }
     }
 }

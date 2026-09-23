@@ -56,7 +56,7 @@ export component AppWindow inherits Window {
     in property <bool> ed-can-delete: false;
     in property <bool> ed-show-osk: false;
     in property <bool> ed-osk-shift: false;
-    in property <[string]> ed-osk-r0;
+    in property <bool> ed-osk-mode: false;
     in property <[string]> ed-osk-r1;
     in property <[string]> ed-osk-r2;
     in property <[string]> ed-osk-r3;
@@ -157,7 +157,7 @@ export component AppWindow inherits Window {
                 can-delete: root.ed-can-delete;
                 show-osk: root.ed-show-osk;
                 osk-shift: root.ed-osk-shift;
-                osk-r0: root.ed-osk-r0;
+                osk-mode: root.ed-osk-mode;
                 osk-r1: root.ed-osk-r1;
                 osk-r2: root.ed-osk-r2;
                 osk-r3: root.ed-osk-r3;

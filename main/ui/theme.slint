@@ -36,8 +36,11 @@ export global Theme {
     in property <color> success: #9fe3a0;
 
     // ---- state layers (M3) ----
-    in property <color> state-pressed: #26ffffff;
-    in property <color> state-hover: #14ffffff;
+    // Cores OPACAS de propósito: a intensidade é dada pelo `opacity` do
+    // Rectangle de overlay no ponto de uso (padrão: 10-12%), como definido
+    // em elements/buttons.slint. Não queime alpha na cor.
+    in property <color> state-pressed: #ffffff;
+    in property <color> state-hover: #ffffff;
 
     // ---- forma ----
     in property <length> shape-xs: 4px;

@@ -116,9 +116,10 @@ export component GhostButton inherits Rectangle {
 
     height: root.h;
     border-radius: Theme.shape-lg;
-    background: ta.pressed && root.enabled ? Theme.state-pressed : transparent;
+    background: transparent;
     border-width: 1px;
     border-color: root.enabled ? Theme.outline : Theme.outline-var;
+    clip: true;
 
     Text {
         text: root.text;
@@ -126,6 +127,14 @@ export component GhostButton inherits Rectangle {
         color: root.enabled ? Theme.on-surface-var : Theme.on-surface-var;
         horizontal-alignment: center;
         vertical-alignment: center;
+    }
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.state-pressed;
+        visible: ta.pressed && root.enabled;
+        border-radius: Theme.shape-sm;
+        opacity: 10%;
     }
     ta := TouchArea {
         enabled: root.enabled;

@@ -40,8 +40,13 @@ Regras:
 
 - Esquema **dark** de alto contraste, primário cian (`#6fd3ff`) p/ legibilidade
   sob luz ambiente; superfícies tonais `surface-1..3` como "elevação".
-- **State layers** do M3: overlay alpha (`state-pressed`/`state-hover`) em
-  botões e linhas de lista, em vez de trocar a cor de fundo.
+- **State layers** do M3: overlay em botões e linhas de lista, em vez de
+  trocar a cor de fundo. Padrão canônico (definido por andre-dev em
+  `elements/buttons.slint` e propagado p/ listas):
+  `Rectangle { width/height:100%; background: Theme.state-pressed;
+  visible: ta.pressed; border-radius: Theme.shape-sm; opacity: 10%; }`
+  Os tokens `state-*` no theme são **opacos**; a intensidade vem só do
+  `opacity` no uso (10% botões/linhas). Não queime alpha na cor.
 - **Shape**: sm 8 / md 12 / lg 16 (botões) / xl 28 (reservado p/ destaques).
 - **Type scale** comprimida: display 30 · headline 24 · title 20 · body 16
   (piso de conforto no painel) · label 13 · tiny 11.
@@ -50,6 +55,23 @@ Regras:
   `Ghost` = neutra (Voltar/Limpar).
 - Semânticas: `success` p/ diretórios/scripts/SD, `tertiary` p/ dirty/bateria,
   `error*` p/ destrutivo.
+
+## Teclado virtual (OSK)
+
+Layout "telefone": 3 fileiras de letras + fileira de funções, com a tecla
+de **modo** (`123`/`abc`) abaixo do SHIFT. Camadas (espelham
+`keyboard/key_mapping.md` do teclado USB):
+
+| modo | shift | fileiras |
+|---|---|---|
+| abc | off | qwerty / asdf+ç / zxcv+pont |
+| abc | on | MAIÚSCULAS |
+| 123 | off | dígitos / `!@#$%^&*()` / `-=[]\_+{}\|` (Lower) |
+| 123 | on | `` `~€£¥°¶•ªº `` / `<>?/:;"'´¨` / `+-×÷=≠≈∞§¤` (Raise adaptada) |
+
+Fileira de funções: `[modo] [<] [>] [^] [v] [espaco] [enter] [ok]`.
+Altura total 168 px; `main.cpp:ED_OSK_H` espelha esse valor p/ cálculo de
+scroll-do-cursor — se mudar um, mude o outro.
 
 ## Gotchas conhecidos
 

@@ -51,7 +51,7 @@ static const int ED_LINE_H = 22;
 static const int ED_CHAR_W = 10;      /* largura média p/ 16px (aprox.) */
 static const int ED_STATUS_H = 30;
 static const int ED_HEADER_H = 42;
-static const int ED_OSK_H = 196;
+static const int ED_OSK_H = 176;   // 168 do OSK + spacing 6 + folga
 
 static void activity(void) { power_mgmt_activity(); }
 
@@ -135,6 +135,7 @@ struct EditorState {
     bool is_new = false;
     int osk_override = -1;     /* -1 auto, 0 força off, 1 força on */
     bool osk_shift = false;
+    bool osk_mode = false;     /* false = abc, true = 123/símbolos */
 };
 static EditorState g_ed;
 
@@ -345,23 +346,25 @@ static void ed_save(void)
 }
 
 /* ---------------- teclado virtual: modelos de linhas -------------- */
-static const char *s_osk_lower[] = {
-    "1 2 3 4 5 6 7 8 9 0",
-    "q w e r t y u i o p",
-    "a s d f g h j k l ç",
-    "z x c v b n m , . ;",
-};
-static const char *s_osk_upper[] = {
-    "1 2 3 4 5 6 7 8 9 0",
-    "Q W E R T Y U I O P",
-    "A S D F G H J K L Ç",
-    "Z X C V B N M , . ;",
+/* [modo][shift][fileira] — modo 0 = abc, modo 1 = 123/símbolos.
+ * As camadas de símbolos espelham Lower/Raise do teclado USB
+ * (reference/.../keyboard/key_mapping.md). */
+static const char *s_osk_rows[2][2][3] = {
+    {   /* modo abc */
+        { "q w e r t y u i o p", "a s d f g h j k l ç", "z x c v b n m , . ;" },
+        { "Q W E R T Y U I O P", "A S D F G H J K L Ç", "Z X C V B N M , . ;" },
+    },
+    {   /* modo 123/símbolos */
+        { "1 2 3 4 5 6 7 8 9 0", "! @ # $ % ^ & * ( )", "- = [ ] \ _ + { } |" },
+        { "` ~ € £ ¥ ° ¶ • ª º", "< > ? / : ; \" ' ´ ¨", "+ - × ÷ = ≠ ≈ ∞ § ¤" },
+    },
 };
 
 static void ed_push_osk_rows(void)
 {
-    const char **src = g_ed.osk_shift ? s_osk_upper : s_osk_lower;
-    for (int r = 0; r < 4; r++) {
+    const char **src = s_osk_rows[g_ed.osk_mode ? 1 : 0][g_ed.osk_shift ? 1 : 0];
+    g_ui->set_ed_osk_mode(g_ed.osk_mode);
+    for (int r = 0; r < 3; r++) {
         auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
         const char *p = src[r];
         std::string cur;
@@ -382,9 +385,8 @@ static void ed_push_osk_rows(void)
                 i++;
             }
         }
-        if (r == 0) g_ui->set_ed_osk_r0(model);
-        else if (r == 1) g_ui->set_ed_osk_r1(model);
-        else if (r == 2) g_ui->set_ed_osk_r2(model);
+        if (r == 0) g_ui->set_ed_osk_r1(model);
+        else if (r == 1) g_ui->set_ed_osk_r2(model);
         else g_ui->set_ed_osk_r3(model);
     }
     g_ui->set_ed_osk_shift(g_ed.osk_shift);
@@ -403,6 +405,7 @@ static void ed_osk_key(const std::string k)
     if (k == "HOME")  { ed_move(0, 0, true, false); return; }
     if (k == "END")   { ed_move(0, 0, false, true); return; }
     if (k == "HIDE")  { g_ed.osk_override = 0; ed_push_ui(false); return; }
+    if (k == "MODE")  { g_ed.osk_mode = !g_ed.osk_mode; ed_push_osk_rows(); return; }
     ed_insert_str(k.data(), k.size());
 }
 
