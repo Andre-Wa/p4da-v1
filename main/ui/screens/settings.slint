@@ -34,19 +34,19 @@ export component SettingsScreen inherits Rectangle {
             spacing: Theme.sp-sm;
             Row {
                 Text { text: "Brilho: " + root.brightness; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
-                Slider { minimum: 1; maximum: 100; value <=> root.brightness; horizontal-stretch: 1; }
+                Slider { minimum: 1; maximum: 100; value <=> root.brightness; horizontal-stretch: 1; step: 1; }
             }
             Row {
                 Text { text: "Dimerizar após (s): " + root.dim-s; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
-                Slider { minimum: 5; maximum: 600; value <=> root.dim-s; horizontal-stretch: 1; }
+                Slider { minimum: 5; maximum: 600; value <=> root.dim-s; horizontal-stretch: 1; step: 5; }
             }
             Row {
                 Text { text: "Standby após (s): " + root.off-s; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
-                Slider { minimum: 10; maximum: 1800; value <=> root.off-s; horizontal-stretch: 1; }
+                Slider { minimum: 10; maximum: 1800; value <=> root.off-s; horizontal-stretch: 1; step: 5; }
             }
             Row {
                 Text { text: "Hibernar após (s, 0=off): " + root.deep-s; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
-                Slider { minimum: 0; maximum: 7200; value <=> root.deep-s; horizontal-stretch: 1; }
+                Slider { minimum: 0; maximum: 7200; value <=> root.deep-s; horizontal-stretch: 1; step: 10; }
             }
         }
 
