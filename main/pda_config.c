@@ -71,15 +71,23 @@ static void tbl_str(lua_State *L, int idx, const char *name, char *out, size_t s
     lua_pop(L, 1);
 }
 
-static void clamp_all(pda_settings_t *s)
+/* Limites = autoridade dos sliders da tela Config. Valores fora de faixa
+ * (ex.: o INT_MAX que o bug de NaN/escala deixou gravado em system.lua)
+ * são substituídos pelos defaults e sinalizados p/ o boot curar o arquivo.
+ * Retorna true se algo foi saneado. */
+static bool clamp_all(pda_settings_t *s)
 {
-    if (s->brightness < 0) s->brightness = 0;
-    if (s->brightness > 100) s->brightness = 100;
-    if (s->dim_after_s < 5) s->dim_after_s = 5;
+    pda_settings_t before = *s;
+    if (s->brightness < 0 || s->brightness > 100) s->brightness = 80;
+    if (s->dim_after_s < 5 || s->dim_after_s > 600) s->dim_after_s = 30;
+    if (s->screen_off_after_s < 10 || s->screen_off_after_s > 1800) s->screen_off_after_s = 120;
+    if (s->deep_sleep_after_s < 0 || s->deep_sleep_after_s > 7200) s->deep_sleep_after_s = 600;
+    /* ordenação (ajuste silencioso, não é "veneno") */
     if (s->screen_off_after_s < s->dim_after_s + 5)
         s->screen_off_after_s = s->dim_after_s + 5;
-    if (s->deep_sleep_after_s < s->screen_off_after_s + 10)
+    if (s->deep_sleep_after_s != 0 && s->deep_sleep_after_s < s->screen_off_after_s + 10)
         s->deep_sleep_after_s = s->screen_off_after_s + 10;
+    return memcmp(&before, s, sizeof(*s)) != 0;
 }
 
 static esp_err_t parse_file(const char *path, pda_settings_t *out)
@@ -138,7 +146,6 @@ static esp_err_t parse_file(const char *path, pda_settings_t *out)
     }
     lua_pop(L, 1);
 
-    clamp_all(&tmp);
     *out = tmp;
 
 done:
@@ -208,16 +215,32 @@ esp_err_t pda_config_init(void)
         return ESP_ERR_INVALID_SIZE;
 
     if (!storage_file_exists(path)) {
-        ESP_LOGI(TAG, "system.lua ausente — criando com defaults em %s", path);
-        return pda_config_save();
+        /* Antes de apelar p/ defaults: promove a cópia da OUTRA raiz
+         * (espelho), para nunca "esquecer" configurações por um boot
+         * em que uma das raízes estava ausente/vazia. */
+        const char *alt = storage_sd_mounted()
+            ? "/internal/pda/config/system.lua"
+            : "/sdcard/pda/config/system.lua";
+        if (storage_file_exists(alt) && storage_copy_file(alt, path) == ESP_OK) {
+            ESP_LOGW(TAG, "system.lua ausente em %s — promovido de %s", path, alt);
+        } else {
+            ESP_LOGI(TAG, "system.lua ausente — criando com defaults em %s", path);
+            return pda_config_save();
+        }
     }
     esp_err_t err = parse_file(path, &s_cfg);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "mantendo defaults em memória (arquivo inválido)");
-    } else {
-        /* Valores não-finitos no arquivo (ex.: o "scale = nan" que causou
-         * o bootloop de 2026-09-23) são substituídos pelos defaults no
-         * parse (tbl_int) e o arquivo é reescrito limpo no próximo save. */
+        clamp_all(&s_cfg);
+    } else if (clamp_all(&s_cfg)) {
+        /* arquivo continha valores fora de faixa (ex.: INT_MAX do bug de
+         * NaN): saneia em memória e CURA o arquivo agora, para o lixo não
+         * se propagar em cada save subsequente. */
+        ESP_LOGW(TAG, "system.lua com valores fora de faixa — saneando e regravando");
+        pda_config_save();
+    }
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "system.lua intacto — nenhuma regravação no boot");
         ESP_LOGI(TAG, "config carregada: brilho=%d dim=%ds off=%ds deep=%ds",
                  s_cfg.brightness, s_cfg.dim_after_s,
                  s_cfg.screen_off_after_s, s_cfg.deep_sleep_after_s);
@@ -234,6 +257,7 @@ void pda_settings_update(const pda_settings_t *s)
     clamp_all(&s_cfg);
     s_dirty = true;
 }
+
 
 void pda_config_reset_defaults(void)
 {

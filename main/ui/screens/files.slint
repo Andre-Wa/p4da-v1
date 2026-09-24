@@ -1,72 +1,261 @@
-// screens/files.slint — gerenciador de arquivos navegável
+// screens/files.slint — gerenciador de arquivos (M3b: ops de arquivo)
+//
+// Interações:
+//  - toque na linha: diretório entra; arquivo abre no editor
+//    (em modo seletor, só diretórios navegam);
+//  - toque no IconMore da linha: sheet de ações (abrir/renomear/copiar/
+//    mover/apagar);
+//  - "Novo dir" no cabeçalho e ações que pedem texto usam o prompt com OSK.
 import { ListView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { TonalButton, GhostButton } from "../elements/buttons.slint";
+import { TonalButton, GhostButton, DangerButton, FilledButton } from "../elements/buttons.slint";
 import { Surface, ScreenTitle } from "../elements/surfaces.slint";
+import { IconForKind, IconMore, IconNewFolder } from "../elements/icons.slint";
+import { OnScreenKeyboard } from "../elements/osk.slint";
 
 export component FileManagerScreen inherits Rectangle {
     in property <[string]> entries;
     in property <[bool]> entries-is-dir;
+    in property <[string]> entry-kind;
     in property <string> current-path;
+
+    // sheet de ações
+    in property <bool> sheet-visible;
+    in property <string> sheet-name;
+    in property <bool> sheet-is-dir;
+
+    // modo seletor de destino (copiar/mover)
+    in property <bool> picker-mode;
+    in property <string> picker-label;
+
+    // prompt (rename / novo dir / confirmação)
+    in property <bool> prompt-visible;
+    in property <string> prompt-title;
+    in property <string> prompt-text;
+    in property <bool> prompt-needs-text;
+    in property <bool> osk-shift;
+    in property <bool> osk-mode;
+    in property <[string]> osk-r1;
+    in property <[string]> osk-r2;
+    in property <[string]> osk-r3;
+
     callback open-entry(string);
     callback request-dir(string);
     callback go-up();
     callback go-back();
     callback refresh();
+    callback more-tapped(string, bool);
+    callback sheet-action(string);
+    callback new-dir();
+    callback new-file();
+    callback picker-select();
+    callback prompt-ok();
+    callback prompt-cancel();
+    callback osk-key(string);
+    callback osk-shift-changed(bool);
 
-    VerticalLayout {
-        padding: Theme.sp-lg;
-        spacing: Theme.sp-md;
+    Rectangle {
+        width: 100%;
+        height: 100%;
 
-        HorizontalLayout {
-            spacing: Theme.sp-sm;
-            Text {
-                text: root.current-path;
-                font-size: Theme.type-body;
-                color: Theme.primary;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-                overflow: elide;
+        VerticalLayout {
+            padding: Theme.sp-lg;
+            spacing: Theme.sp-md;
+
+            HorizontalLayout {
+                spacing: Theme.sp-sm;
+                Text {
+                    text: root.picker-mode ? root.picker-label : root.current-path;
+                    font-size: Theme.type-body;
+                    color: root.picker-mode ? Theme.tertiary : Theme.primary;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                TonalButton { width: 100px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Novo dir"; clicked => { root.new-dir(); } }
+                TonalButton { width: 100px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Novo arq"; clicked => { root.new-file(); } }
+                TonalButton { width: 70px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Att"; clicked => { root.refresh(); } }
+                TonalButton { width: 70px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Sobe"; clicked => { root.go-up(); } }
+                GhostButton { width: 90px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Voltar"; clicked => { root.go-back(); } }
             }
-            TonalButton { width: 70px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Att"; clicked => { root.refresh(); } }
-            TonalButton { width: 70px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Sobe"; clicked => { root.go-up(); } }
-            GhostButton { width: 90px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Voltar"; clicked => { root.go-back(); } }
+
+            Surface {
+                level: 1;
+                vertical-stretch: 1;
+                clip: true;
+
+                ListView {
+                    width: 100%;
+                    height: 100%;
+                    for entry[i] in root.entries: Rectangle {
+                        height: Theme.row-h;
+                        clip: true;
+                        TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => { root.open-entry(entry); }
+                        }
+                        IconForKind {
+                            x: Theme.sp-md;
+                            height: 100%;
+                            kind: root.entry-kind[i];
+                            size: Theme.type-body;
+                            tint: root.entries-is-dir[i] ? Theme.success : Theme.on-surface-var;
+                        }
+                        Text {
+                            x: Theme.sp-md + 26px;
+                            width: parent.width - (Theme.sp-md + 26px) - 44px;
+                            height: 100%;
+                            text: entry;
+                            color: root.entries-is-dir[i] ? Theme.success : Theme.on-surface;
+                            font-size: Theme.type-body;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        TouchArea {
+                            x: parent.width - 44px;
+                            width: 44px;
+                            height: 100%;
+                            clicked => { root.more-tapped(entry, root.entries-is-dir[i]); }
+                            Rectangle {
+                                width: 100%;
+                                height: 100%;
+                                background: Theme.state-pressed;
+                                visible: parent.pressed;
+                                opacity: 10%;
+                            }
+                            IconMore {
+                                width: 100%;
+                                height: 100%;
+                                size: Theme.type-body;
+                                tint: Theme.on-surface-var;
+                                horizontal-alignment: center;
+                            }
+                        }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.outline-var; }
+                    }
+                }
+            }
+
+            if root.picker-mode: FilledButton {
+                text: "Selecionar este diretório";
+                clicked => { root.picker-select(); }
+            }
         }
 
-        Surface {
-            level: 1;
-            vertical-stretch: 1;
-            clip: true;
-
-            ListView {
+        // ---- sheet de ações (overlay inferior) ----
+        if root.sheet-visible: Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #99000000;
+            TouchArea {
                 width: 100%;
                 height: 100%;
-                for entry[i] in root.entries: Rectangle {
-                    height: Theme.row-h;
-                    clip: true;
+                clicked => { root.sheet-action("cancelar"); }
+            }
+            Rectangle {
+                x: Theme.sp-lg;
+                y: parent.height - 260px;
+                width: parent.width - Theme.sp-lg * 2;
+                height: 244px;
+                background: Theme.surface-2;
+                border-radius: Theme.shape-lg;
+                border-width: 1px;
+                border-color: Theme.outline;
+
+                VerticalLayout {
+                    padding: Theme.sp-md;
+                    spacing: Theme.sp-sm;
                     Text {
-                        x: Theme.sp-md;
-                        text: root.entries-is-dir[i] ? "> " + entry : "    " + entry;
-                        color: root.entries-is-dir[i] ? Theme.success : Theme.on-surface;
+                        text: root.sheet-name;
                         font-size: Theme.type-body;
-                        vertical-alignment: center;
+                        font-weight: 700;
+                        color: Theme.on-surface;
                         overflow: elide;
                     }
-                    Rectangle {
-                        width: 100%;
-                        height: 100%;
-                        background: Theme.state-pressed;
-                        visible: ta.pressed;
-                        border-radius: Theme.shape-sm;
-                        opacity: 10%;
+                    GridLayout {
+                        spacing: Theme.sp-sm;
+                        Row {
+                            TonalButton { text: "Abrir"; clicked => { root.sheet-action("abrir"); } }
+                            TonalButton { text: "Renomear"; clicked => { root.sheet-action("renomear"); } }
+                        }
+                        Row {
+                            TonalButton { text: "Copiar"; clicked => { root.sheet-action("copiar"); } }
+                            TonalButton { text: "Mover"; clicked => { root.sheet-action("mover"); } }
+                        }
+                        Row {
+                            DangerButton { text: "Apagar"; clicked => { root.sheet-action("apagar"); } }
+                            GhostButton { text: "Cancelar"; clicked => { root.sheet-action("cancelar"); } }
+                        }
                     }
-                    ta := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        clicked => { root.open-entry(entry); }
-                    }
-                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.outline-var; }
                 }
+            }
+        }
+
+        // ---- prompt (texto ou confirmação) + OSK ----
+        if root.prompt-visible: Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #99000000;
+            TouchArea {
+                width: 100%;
+                height: 100%;
+                clicked => { root.prompt-cancel(); }
+            }
+            Rectangle {
+                x: Theme.sp-lg;
+                y: root.prompt-needs-text ? 40px : (parent.height - 150px) / 2;
+                width: parent.width - Theme.sp-lg * 2;
+                height: root.prompt-needs-text ? 120px : 150px;
+                background: Theme.surface-2;
+                border-radius: Theme.shape-lg;
+                border-width: 1px;
+                border-color: Theme.outline;
+
+                VerticalLayout {
+                    padding: Theme.sp-md;
+                    spacing: Theme.sp-sm;
+                    Text {
+                        text: root.prompt-title;
+                        font-size: Theme.type-body;
+                        color: Theme.on-surface;
+                        wrap: word-wrap;
+                    }
+                    if root.prompt-needs-text: Rectangle {
+                        height: 44px;
+                        background: Theme.surface-1;
+                        border-radius: Theme.shape-sm;
+                        border-width: 1px;
+                        border-color: Theme.primary;
+                        Text {
+                            x: Theme.sp-sm;
+                            width: parent.width - Theme.sp-sm * 2;
+                            height: 100%;
+                            text: root.prompt-text + "|";
+                            font-size: Theme.type-body;
+                            color: Theme.on-surface;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.sp-sm;
+                        FilledButton { text: "OK"; clicked => { root.prompt-ok(); } }
+                        GhostButton { text: "Cancelar"; clicked => { root.prompt-cancel(); } }
+                    }
+                }
+            }
+            if root.prompt-needs-text: OnScreenKeyboard {
+                y: parent.height - Theme.osk-h - 4px;
+                width: 100%;
+                height: Theme.osk-h;
+                r1: root.osk-r1;
+                r2: root.osk-r2;
+                r3: root.osk-r3;
+                shift: root.osk-shift;
+                mode: root.osk-mode;
+                key(k) => { root.osk-key(k); }
+                shift-changed(s) => { root.osk-shift-changed(s); }
             }
         }
     }

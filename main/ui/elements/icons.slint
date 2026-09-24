@@ -1,0 +1,329 @@
+// elements/icons.slint — ícones Material Icons (Apache-2.0, subset)
+//
+// Subset pré-gerado (3,4 KB) por tools/make_icons.sh; glifos são
+// pré-rasterizados no compile como qualquer fonte estática.
+// Para adicionar ícone: tools/icons.json -> make_icons.sh -> wrapper aqui.
+import { Theme } from "../theme.slint";
+import "../assets/MaterialIcons-Subset.ttf";
+
+// Ícone por CATEGORIA vinda do C++ ("dir","lua","sh","audio","img","txt",
+// "sd","int", ...). Os codepoints PRECISAM ser literais estáticos aqui:
+// o renderer pré-rasteriza só o que aparece no .slint — codepoint enviado
+// em runtime do C++ renderiza em branco (avanço reservado, glifo ausente).
+export component IconForKind inherits Text {
+    in property <string> kind;
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: root.kind == "dir"   ? ""
+        : root.kind == "lua"   ? ""
+        : root.kind == "sh"    ? ""
+        : root.kind == "audio" ? ""
+        : root.kind == "img"   ? ""
+        : root.kind == "txt"   ? ""
+        : root.kind == "sd"    ? ""
+        : "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconFolder inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconFileText inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconCode inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconTerminal inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconMusic inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconImage inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconSettings inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconBack inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconRefresh inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconSd inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconCopy inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconMove inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconEdit inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconDelete inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconNewFolder inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconClose inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconCheck inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconKeyboard inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconPlay inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconPause inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconWifi inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconBluetooth inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconClock inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconPerson inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconEvent inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconSearch inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconChevron inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconMore inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconError inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}
+
+export component IconFileGeneric inherits Text {
+    in property <length> size: Theme.type-title;
+    in property <color> tint: Theme.on-surface-var;
+    text: "";
+    font-family: "Material Icons";
+    font-size: root.size;
+    color: root.tint;
+    vertical-alignment: center;
+}

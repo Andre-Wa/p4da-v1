@@ -8,6 +8,7 @@ idf_component_register(
         "pda_config.c"
         "lua_runtime.c"
         "power_mgmt.c"
+        "wifi_net.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_lcd
@@ -22,6 +23,10 @@ idf_component_register(
         sdmmc
         littlefs
         lua
+        esp_wifi
+        esp_netif
+        esp_event
+        lwip
         esp_pm
         esp_timer
         pthread

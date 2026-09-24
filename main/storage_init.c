@@ -29,6 +29,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <dirent.h>
 #include <errno.h>
 
 static const char *TAG = "storage";
@@ -358,4 +359,36 @@ esp_err_t storage_copy_file(const char *src, const char *dst)
     err = storage_write_text_file(dst, data, len);
     free(data);
     return err;
+}
+
+esp_err_t storage_move_file(const char *src, const char *dst)
+{
+    if (storage_file_exists(dst) || storage_is_dir(dst)) {
+        ESP_LOGW(TAG, "destino já existe: %s", dst);
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (rename(src, dst) == 0) return ESP_OK;   /* mesmo mount: rápido */
+    esp_err_t err = storage_copy_file(src, dst);
+    if (err != ESP_OK) return err;
+    return storage_delete_file(src);
+}
+
+esp_err_t storage_rm_rf(const char *path)
+{
+    if (!storage_is_dir(path)) return storage_delete_file(path);
+    DIR *d = opendir(path);
+    if (!d) return ESP_FAIL;
+    struct dirent *ent;
+    char child[384];
+    while ((ent = readdir(d)) != NULL) {
+        if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
+        snprintf(child, sizeof(child), "%s/%s", path, ent->d_name);
+        storage_rm_rf(child);
+    }
+    closedir(d);
+    if (rmdir(path) != 0 && errno != ENOENT) {
+        ESP_LOGW(TAG, "rmdir(%s): %s", path, strerror(errno));
+        return ESP_FAIL;
+    }
+    return ESP_OK;
 }

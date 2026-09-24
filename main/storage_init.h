@@ -62,6 +62,10 @@ bool storage_file_exists(const char *path);
 bool storage_is_dir(const char *path);
 int64_t storage_file_size(const char *path);
 esp_err_t storage_copy_file(const char *src, const char *dst);
+/** Copia + apaga (rename(2) não cruza mounts). Falha se dst existir. */
+esp_err_t storage_move_file(const char *src, const char *dst);
+/** Apaga recursivamente (arquivos e diretórios). */
+esp_err_t storage_rm_rf(const char *path);
 
 #ifdef __cplusplus
 }

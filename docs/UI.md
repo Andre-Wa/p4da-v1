@@ -96,3 +96,22 @@ scroll-do-cursor — se mudar um, mude o outro.
 - `int` não converte para `length` implicitamente: multiplique por `1px`
   ou declare a propriedade como `length`.
 - property e callback não podem ter o mesmo nome num component.
+
+## Ícones (Material Icons, subset)
+
+- `main/ui/assets/MaterialIcons-Subset.ttf` (~3,4 KB, Apache-2.0, licença
+  junto) + `main/ui/elements/icons.slint` com `IconGlyph` (codepoint vindo
+  do C++) e wrappers nomeados (`IconFolder`, `IconCode`, `IconSd`, ...).
+- Glifos pré-rasterizados no compile como qualquer fonte estática; cor via
+  `tint`, tamanho via `size` (tokens do Theme).
+- Adicionar ícone: nome em `tools/icons.json` → `tools/make_icons.sh` →
+  wrapper em `icons.slint` → rebuild. Codepoints usados pelo C++ estão em
+  `main.cpp` (`IC_*`).
+- No C++, codepoints de ícone são literais narrow **sem prefixo `u8`**
+  (`static const char *IC_X = "\uE2C7";` ou o caractere cru): em C++20
+  (IDF 5.5) `u8""` é `const char8_t*` e não converte p/ `const char*`.
+- **Codepoints de ícone NUNCA viajam do C++ em runtime**: o renderer
+  pré-rasteriza apenas literais estáticos do `.slint`. O C++ envia uma
+  *categoria* ("dir","lua","audio",...) e `IconForKind` (icons.slint) faz o
+  mapeamento com literais crus no ternário. Sintoma do erro: espaço
+  reservado mas glifo em branco.

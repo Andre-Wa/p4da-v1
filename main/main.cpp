@@ -20,6 +20,7 @@
 #include "pda_config.h"
 #include "lua_runtime.h"
 #include "power_mgmt.h"
+#include "wifi_net.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -63,6 +64,8 @@ static void activity(void) { power_mgmt_activity(); }
 static void refresh_notes_list(void);
 static void refresh_scripts_list(void);
 static void list_dir_async(const std::string dir);
+static void nav_goto(AppState st);
+static void nav_back(void);
 
 /** std::thread com pilha explícita: o default do IDF (~3K) estoura a VM Lua
  *  e é apertado p/ readdir+FATFS. Chamado NA task que cria a thread. */
@@ -111,12 +114,28 @@ static void settings_changed_by_lua(void)
 }
 
 /* ---------------- relógio da status bar --------------------------- */
+void wifi_net_on_event_ui(bool connected, int rssi)
+{
+    char buf[40];
+    if (connected) snprintf(buf, sizeof(buf), "wifi %d dBm", rssi);
+    else snprintf(buf, sizeof(buf), "wifi --");
+    std::string s(buf);
+    slint::invoke_from_event_loop([s]() {
+        g_ui->set_status_wifi(slint::SharedString(s));
+    });
+}
+
 static void update_clock(void)
 {
-    int64_t up_s = esp_timer_get_time() / 1000000LL;
     char buf[32];
-    snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
-             (int)(up_s / 3600), (int)((up_s / 60) % 60), (int)(up_s % 60));
+    const char *hhmm = wifi_net_time_hhmm();
+    if (hhmm) {
+        snprintf(buf, sizeof(buf), "%s", hhmm);
+    } else {
+        int64_t up_s = esp_timer_get_time() / 1000000LL;
+        snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+                 (int)(up_s / 3600), (int)((up_s / 60) % 60), (int)(up_s % 60));
+    }
     g_ui->set_status_clock(slint::SharedString(buf));
 
     const char *pwr = "ATIVO";
@@ -308,7 +327,7 @@ static void ed_load(const std::string &path, const std::string &content, bool is
     g_ed.osk_override = -1;
     ed_push_ui(false);
     g_ui->set_ed_scroll_y(0.f);
-    g_ui->set_active_app(AppState::Editor);
+    nav_goto(AppState::Editor);
     s_session_app = "noteedit";
     s_session_note = is_new ? std::string("") : ed_title();
 }
@@ -416,6 +435,26 @@ static void ed_osk_key(const std::string k)
 /* ================================================================== */
 /* GERENCIADOR DE ARQUIVOS                                             */
 /* ================================================================== */
+/* Categoria de ícone (o codepoint vive estático em icons.slint). */
+static const char *icon_kind_for(const char *name, bool isdir)
+{
+    if (isdir) return "dir";
+    size_t n = strlen(name);
+    struct { const char *ext; const char *kind; } map[] = {
+        { ".lua", "lua" }, { ".sh", "sh" },
+        { ".mp3", "audio" }, { ".wav", "audio" }, { ".flac", "audio" }, { ".ogg", "audio" },
+        { ".png", "img" }, { ".jpg", "img" }, { ".jpeg", "img" },
+        { ".gif", "img" }, { ".bmp", "img" },
+        { ".txt", "txt" }, { ".md", "txt" }, { ".csv", "txt" },
+        { ".log", "txt" }, { ".ini", "txt" }, { ".json", "txt" },
+    };
+    for (auto &m : map) {
+        size_t e = strlen(m.ext);
+        if (n > e && !strcasecmp(name + n - e, m.ext)) return m.kind;
+    }
+    return "file";
+}
+
 static bool is_textish(const char *name)
 {
     const char *exts[] = { ".txt", ".lua", ".md", ".csv", ".log", ".ini", ".json" };
@@ -432,6 +471,7 @@ static void list_dir_async(const std::string dir)
     spawn_thread("io_list", 8192, [dir]() {
         auto names = std::make_shared<slint::VectorModel<slint::SharedString>>();
         auto isdir = std::make_shared<slint::VectorModel<bool>>();
+        auto icons = std::make_shared<slint::VectorModel<slint::SharedString>>();
 
         DIR *d = opendir(dir.c_str());
         if (d) {
@@ -445,32 +485,115 @@ static void list_dir_async(const std::string dir)
                 else files.push_back(n);
             }
             closedir(d);
-            for (auto &n : dirs) { names->push_back(slint::SharedString(n)); isdir->push_back(true); }
-            for (auto &n : files) { names->push_back(slint::SharedString(n)); isdir->push_back(false); }
+            for (auto &n : dirs) {
+                names->push_back(slint::SharedString(n));
+                isdir->push_back(true);
+                icons->push_back(slint::SharedString(icon_kind_for(n.c_str(), true)));
+            }
+            for (auto &n : files) {
+                names->push_back(slint::SharedString(n));
+                isdir->push_back(false);
+                icons->push_back(slint::SharedString(icon_kind_for(n.c_str(), false)));
+            }
             if (dirs.empty() && files.empty()) {
                 names->push_back(slint::SharedString("(vazio)"));
                 isdir->push_back(false);
+                icons->push_back(slint::SharedString(""));
             }
         } else {
             names->push_back(slint::SharedString("(não montado)"));
             isdir->push_back(false);
+            icons->push_back(slint::SharedString(""));
         }
 
-        slint::invoke_from_event_loop([names, isdir, dir]() {
+        slint::invoke_from_event_loop([names, isdir, icons, dir]() {
             g_ui->set_file_entries(names);
             g_ui->set_file_is_dir(isdir);
+            g_ui->set_file_kind(icons);
             g_ui->set_file_path(slint::SharedString(dir));
         });
     }).detach();
+}
+
+struct FmState {
+    bool sheet = false;
+    std::string sheet_name;
+    bool sheet_isdir = false;
+    bool picker = false;
+    std::string picker_op;      /* "copy" | "move" */
+    std::string picker_src;
+    std::string picker_label;
+    bool prompt = false;
+    std::string prompt_title;
+    std::string prompt_text;
+    std::string prompt_action;  /* rename | newdir | delete */
+    bool prompt_needs_text = false;
+};
+static FmState g_fm;
+static std::vector<std::string> g_dir_hist;   /* histórico p/ Voltar em Arquivos */
+static std::vector<AppState> g_nav_hist;      /* pilha de telas p/ Voltar global */
+
+static void nav_goto(AppState st)
+{
+    AppState cur = g_ui->get_active_app();
+    if (cur != st) g_nav_hist.push_back(cur);
+    g_ui->set_active_app(st);
+}
+
+static void nav_back(void)
+{
+    while (!g_nav_hist.empty()) {
+        AppState prev = g_nav_hist.back();
+        g_nav_hist.pop_back();
+        g_ui->set_active_app(prev);
+        if (prev == AppState::FileManager) { list_dir_async(g_fm_dir); return; }
+        if (prev == AppState::NotesList) { refresh_notes_list(); return; }
+        if (prev == AppState::Scripts) { refresh_scripts_list(); return; }
+        if (prev != AppState::Editor) return;   /* Editor sem estado p/ restaurar: continua descendo */
+    }
+    g_ui->set_active_app(AppState::Launcher);
+}
+
+static void fm_enter_dir(const std::string &dir)
+{
+    g_dir_hist.push_back(g_fm_dir);
+    g_fm_dir = dir;
+    list_dir_async(g_fm_dir);
+}
+
+static void push_fm_ui(void)
+{
+    g_ui->set_fm_sheet(g_fm.sheet);
+    g_ui->set_fm_sheet_name(slint::SharedString(g_fm.sheet_name));
+    g_ui->set_fm_sheet_isdir(g_fm.sheet_isdir);
+    g_ui->set_fm_picker(g_fm.picker);
+    g_ui->set_fm_picker_label(slint::SharedString(g_fm.picker_label));
+    g_ui->set_fm_prompt(g_fm.prompt);
+    g_ui->set_fm_prompt_title(slint::SharedString(g_fm.prompt_title));
+    g_ui->set_fm_prompt_text(slint::SharedString(g_fm.prompt_text));
+    g_ui->set_fm_prompt_needs_text(g_fm.prompt_needs_text);
+}
+
+static std::string base_name(const std::string &p)
+{
+    size_t i = p.find_last_of('/');
+    return (i == std::string::npos) ? p : p.substr(i + 1);
 }
 
 static void fm_open_entry(const std::string name)
 {
     if (name == "(vazio)" || name == "(não montado)") return;
     std::string full = g_fm_dir + "/" + name;
+    if (g_fm.picker) {
+        if (storage_is_dir(full.c_str())) {
+            fm_enter_dir(full);
+        } else {
+            log_line("[seletor] navegue até um diretório e toque em Selecionar", NULL);
+        }
+        return;
+    }
     if (storage_is_dir(full.c_str())) {
-        g_fm_dir = full;
-        list_dir_async(g_fm_dir);
+        fm_enter_dir(full);
         return;
     }
     if (is_textish(name.c_str())) {
@@ -649,6 +772,7 @@ static void push_settings_to_ui(void)
     storage_sd_describe(buf, sizeof(buf));
     g_ui->set_cfg_store_info(slint::SharedString(buf));
     g_ui->set_status_store(slint::SharedString(buf));
+    g_ui->set_status_store_icon(slint::SharedString(storage_sd_mounted() ? "sd" : "int"));
     g_ui->set_cfg_batt_info(slint::SharedString("nao medivel (IP5306)"));
     g_ui->set_status_batt(slint::SharedString("--"));
 }
@@ -702,20 +826,21 @@ extern "C" void app_main(void)
         std::string n(name.data());
         if (n == "Arquivos") {
             g_fm_dir = pda_root();
+            g_dir_hist.clear();
             list_dir_async(g_fm_dir);
-            g_ui->set_active_app(AppState::FileManager);
+            nav_goto(AppState::FileManager);
             s_session_app = "files";
         } else if (n == "Notas") {
             refresh_notes_list();
-            g_ui->set_active_app(AppState::NotesList);
+            nav_goto(AppState::NotesList);
             s_session_app = "notes";
         } else if (n == "Scripts") {
             refresh_scripts_list();
-            g_ui->set_active_app(AppState::Scripts);
+            nav_goto(AppState::Scripts);
             s_session_app = "scripts";
         } else if (n == "Config") {
             push_settings_to_ui();
-            g_ui->set_active_app(AppState::Settings);
+            nav_goto(AppState::Settings);
             s_session_app = "settings";
         }
     });
@@ -733,6 +858,13 @@ extern "C" void app_main(void)
     });
     ui->on_dir_up([]() {
         activity();
+        if (g_fm.prompt || g_fm.sheet) {
+            g_fm.prompt = g_fm.sheet = false;
+            push_fm_ui();
+            return;
+        }
+        /* picker: Sobe navega normalmente (precisa conseguir sair de
+         * subdiretórios para escolher destino!) */
         std::string d = g_fm_dir;
         size_t slash = d.find_last_of('/');
         if (slash != std::string::npos && slash > 0) {
@@ -747,6 +879,165 @@ extern "C" void app_main(void)
             g_fm_dir = pda_root();
         }
         list_dir_async(g_fm_dir);
+    });
+
+    /* ---------- operações de arquivo (M3b) ---------- */
+    ui->on_fm_more([](slint::SharedString name, bool isdir) {
+        activity();
+        g_fm.sheet = true;
+        g_fm.sheet_name = std::string(name.data());
+        g_fm.sheet_isdir = isdir;
+        push_fm_ui();
+    });
+    ui->on_fm_sheet_action([](slint::SharedString a) {
+        activity();
+        std::string act(a.data());
+        if (act == "cancelar") { g_fm.sheet = false; push_fm_ui(); return; }
+        if (act == "abrir") {
+            g_fm.sheet = false;
+            push_fm_ui();
+            fm_open_entry(g_fm.sheet_name);
+            return;
+        }
+        if (act == "renomear") {
+            g_fm.sheet = false;
+            g_fm.prompt = true;
+            g_fm.prompt_needs_text = true;
+            g_fm.prompt_title = "Renomear \"" + g_fm.sheet_name + "\" para:";
+            g_fm.prompt_text = g_fm.sheet_name;
+            g_fm.prompt_action = "rename";
+            push_fm_ui();
+            return;
+        }
+        if (act == "copiar" || act == "mover") {
+            g_fm.sheet = false;
+            g_fm.picker = true;
+            g_fm.picker_op = (act == "copiar") ? "copy" : "move";
+            g_fm.picker_src = g_fm_dir + "/" + g_fm.sheet_name;
+            g_fm.picker_label = (act == "copiar" ? "Copiar \"" : "Mover \"")
+                              + g_fm.sheet_name + "\" para:";
+            push_fm_ui();
+            return;
+        }
+        if (act == "apagar") {
+            g_fm.sheet = false;
+            g_fm.prompt = true;
+            g_fm.prompt_needs_text = false;
+            g_fm.prompt_title = "Apagar \"" + g_fm.sheet_name + "\"? Não dá para desfazer.";
+            g_fm.prompt_action = "delete";
+            push_fm_ui();
+            return;
+        }
+    });
+    ui->on_fm_newfile([]() {
+        activity();
+        g_fm.prompt = true;
+        g_fm.prompt_needs_text = true;
+        g_fm.prompt_title = "Nome do novo arquivo (ex.: nota.txt):";
+        g_fm.prompt_text = "";
+        g_fm.prompt_action = "newfile";
+        push_fm_ui();
+    });
+    ui->on_fm_newdir([]() {
+        activity();
+        g_fm.prompt = true;
+        g_fm.prompt_needs_text = true;
+        g_fm.prompt_title = "Nome do novo diretório:";
+        g_fm.prompt_text = "";
+        g_fm.prompt_action = "newdir";
+        push_fm_ui();
+    });
+    ui->on_fm_picker_select([]() {
+        activity();
+        if (!g_fm.picker) return;
+        std::string dest = g_fm_dir + "/" + base_name(g_fm.picker_src);
+        char msg[320];
+        esp_err_t err = (g_fm.picker_op == "copy")
+            ? storage_copy_file(g_fm.picker_src.c_str(), dest.c_str())
+            : storage_move_file(g_fm.picker_src.c_str(), dest.c_str());
+        if (err == ESP_OK) {
+            snprintf(msg, sizeof(msg), "[ok] %s -> %s",
+                     g_fm.picker_op.c_str(), dest.c_str());
+        } else {
+            snprintf(msg, sizeof(msg), "[erro] %s falhou (%s) — destino existe?",
+                     g_fm.picker_op.c_str(), esp_err_to_name(err));
+        }
+        log_line(msg, NULL);
+        g_fm.picker = false;
+        push_fm_ui();
+        list_dir_async(g_fm_dir);
+    });
+    ui->on_fm_prompt_ok([]() {
+        activity();
+        if (!g_fm.prompt) return;
+        std::string target = g_fm_dir + "/" + g_fm.sheet_name;
+        char msg[320];
+        if (g_fm.prompt_action == "rename") {
+            std::string nt = g_fm.prompt_text;
+            if (nt.empty() || nt == "." || nt == ".." || nt.find('/') != std::string::npos) {
+                log_line("[erro] nome inválido", NULL);
+            } else {
+                std::string dest = g_fm_dir + "/" + nt;
+                esp_err_t err = storage_move_file(target.c_str(), dest.c_str());
+                snprintf(msg, sizeof(msg), err == ESP_OK ? "[ok] renomeado p/ %s" : "[erro] renomear (%s)",
+                         err == ESP_OK ? nt.c_str() : esp_err_to_name(err));
+                log_line(msg, NULL);
+            }
+        } else if (g_fm.prompt_action == "newdir") {
+            std::string nt = g_fm.prompt_text;
+            if (nt.empty() || nt.find('/') != std::string::npos) {
+                log_line("[erro] nome inválido", NULL);
+            } else {
+                storage_ensure_dir((g_fm_dir + "/" + nt).c_str());
+                log_line("[ok] diretório criado", NULL);
+            }
+        } else if (g_fm.prompt_action == "newfile") {
+            std::string nt = g_fm.prompt_text;
+            if (nt.empty() || nt.find('/') != std::string::npos) {
+                log_line("[erro] nome inválido", NULL);
+            } else {
+                std::string path = g_fm_dir + "/" + nt;
+                if (storage_file_exists(path.c_str())) {
+                    log_line("[erro] arquivo já existe", NULL);
+                } else if (storage_write_text_file(path.c_str(), "", 0) == ESP_OK) {
+                    log_line("[ok] arquivo criado", NULL);
+                    g_fm.prompt = false;
+                    push_fm_ui();
+                    ed_open_path_async(path);   /* já abre p/ editar */
+                    return;
+                }
+            }
+        } else if (g_fm.prompt_action == "delete") {
+            esp_err_t err = storage_rm_rf(target.c_str());
+            snprintf(msg, sizeof(msg), err == ESP_OK ? "[ok] apagado: %s" : "[erro] apagar (%s)",
+                     err == ESP_OK ? g_fm.sheet_name.c_str() : esp_err_to_name(err));
+            log_line(msg, NULL);
+        }
+        g_fm.prompt = false;
+        push_fm_ui();
+        list_dir_async(g_fm_dir);
+    });
+    ui->on_fm_prompt_cancel([]() {
+        activity();
+        g_fm.prompt = false;
+        push_fm_ui();
+    });
+    ui->on_app_back([]() {
+        activity();
+        nav_back();
+    });
+    ui->on_fm_back([]() {
+        activity();
+        if (g_fm.prompt) { g_fm.prompt = false; push_fm_ui(); return; }
+        if (g_fm.sheet) { g_fm.sheet = false; push_fm_ui(); return; }
+        if (g_fm.picker) { g_fm.picker = false; push_fm_ui(); return; }
+        if (!g_dir_hist.empty()) {
+            g_fm_dir = g_dir_hist.back();
+            g_dir_hist.pop_back();
+            list_dir_async(g_fm_dir);
+            return;
+        }
+        nav_back();
     });
 
     /* ---------- notas ---------- */
@@ -782,7 +1073,24 @@ extern "C" void app_main(void)
     });
     ui->on_ed_osk_key([](slint::SharedString k) {
         activity();
-        ed_osk_key(std::string(k.data()));
+        std::string key(k.data());
+        if (g_fm.prompt && g_fm.prompt_needs_text) {
+            if (key == "BACKSPACE") {
+                if (!g_fm.prompt_text.empty()) g_fm.prompt_text.pop_back();
+            } else if (key == "ENTER") {
+                g_ui->invoke_fm_prompt_ok();
+                return;
+            } else if (key == "HIDE" || key == "MODE" || key == "LEFT" ||
+                       key == "RIGHT" || key == "UP" || key == "DOWN") {
+                if (key == "MODE") { g_ed.osk_mode = !g_ed.osk_mode; ed_push_osk_rows(); }
+                return;
+            } else {
+                g_fm.prompt_text += key;
+            }
+            push_fm_ui();
+            return;
+        }
+        ed_osk_key(key);
     });
     ui->on_ed_osk_shift_set([](bool s) {
         activity();
@@ -891,11 +1199,19 @@ extern "C" void app_main(void)
             storage_sd_describe(buf, sizeof(buf));
             g_ui->set_status_store(slint::SharedString(buf));
             g_ui->set_cfg_store_info(slint::SharedString(buf));
+            g_ui->set_status_store_icon(slint::SharedString(storage_sd_mounted() ? "sd" : "int"));
             g_ui->set_has_keyboard(usb_hid_keyboard_connected());
         });
     }, NULL);
     power_mgmt_set_hibernate_save_cb(session_save, NULL);
     power_mgmt_init();
+
+    /* Wi-Fi/NTP (M4): sem config/wifi.lua retorna NOT_FOUND e segue offline */
+    if (wifi_net_init() == ESP_OK) {
+        g_ui->set_status_wifi(slint::SharedString("wifi ..."));
+    } else {
+        g_ui->set_status_wifi(slint::SharedString("wifi off"));
+    }
 
     session_restore_if_needed();
     update_clock();
