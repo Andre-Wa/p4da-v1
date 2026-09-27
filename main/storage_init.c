@@ -62,6 +62,12 @@ static esp_err_t init_internal_littlefs(void)
 static esp_err_t sd_mount_try(const char *mount_point, int freq_khz, int width)
 {
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    /* Slot 0 = IOMUX fixo do microSD no P4 (43/44/39-42). O slot 1 é do
+     * ESP-Hosted/SDIO do C6: montar o cartão no slot 1 (default do
+     * SDMMC_SLOT_CONFIG_DEFAULT) fazia os dois brigarem pelo periférico
+     * (sdmmc_card_init failed no hosted + 0x107 no cartão + leituras
+     * corrompidas do system.lua). Observado e corrigido em 2026-09-24. */
+    host.slot = 0;
     host.max_freq_khz = freq_khz;
 
     sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();

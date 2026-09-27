@@ -120,3 +120,21 @@ Nada de M(n+1) começa com pendência de M(n).
   (liberar dispositivo e re-enumerar) — candidato a M4.
 - **system.lua envenenado com INT_MAX** (herança do bug de NaN): curado em
   2026-09-23 com saneamento+regravação única no boot (pda_config.c).
+
+### M4b — Tela de redes (FEITO, aguardando validação com C6 2.12.9)
+- [x] `screens/networks.slint`: scan listando SSID + RSSI + cadeado
+      (ícones `lock`/`wifi` adicionados ao subset), ordenado por sinal
+- [x] Toque em rede aberta conecta; rede fechada abre prompt de senha
+      (OSK) e conecta; conexão persiste em `config/wifi.lua` (serializado
+      pelo firmware, com escape de aspas/barras)
+- [x] Tile "Redes" no launcher; status da conexão (`Conectada: ...`)
+- [ ] M4c: Bluetooth (HCI hosted) — ainda não iniciado
+
+## M-power (rework do light sleep) — ABERTO
+- O caminho `power.light_sleep` está atrás do kill-switch
+  `power_mgmt_light_sleep_active()` (sempre false): no wake, o remount do
+  SDMMC (periférico compartilhado com o SDIO do hosted) causou Instruction
+  access fault no core 1, e o wake por BOOT/toque não disparava
+  (`sleep: Incorrect wakeup source (7)/(4)`).
+- Para reabilitar: rework de re-init coordenado hosted+SDMMC+USB no wake,
+  ou aceitar tear-down completo do hosted antes do sleep e re-init depois.

@@ -32,6 +32,23 @@ const char *wifi_net_time_hhmm(void);
 /** RSSI em dBm (0 se desconectado). */
 int wifi_net_rssi(void);
 
+/** SSID atual (configurado), nunca NULL. */
+const char *wifi_net_ssid(void);
+
+typedef struct {
+    char ssid[33];
+    int  rssi;
+    bool open;
+} wifi_net_ap_t;
+
+/** Scan bloqueante em task própria; cb chamado dessa task (hop p/ UI
+ *  é responsabilidade do caller). count==0 se nada/erro. */
+typedef void (*wifi_net_scan_cb)(const wifi_net_ap_t *aps, int count, void *ctx);
+esp_err_t wifi_net_scan(wifi_net_scan_cb cb, void *ctx);
+
+/** Conecta (e opcionalmente persiste em config/wifi.lua). */
+esp_err_t wifi_net_connect(const char *ssid, const char *pass, bool save);
+
 #ifdef __cplusplus
 }
 #endif

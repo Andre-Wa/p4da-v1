@@ -74,13 +74,23 @@ static bool load_wifi_lua(void)
         lua_getfield(L, -1, "auto_connect");
         s_auto = lua_isboolean(L, -1) ? lua_toboolean(L, -1) : true;
         lua_pop(L, 1);
-        ok = s_ssid[0] != '\0';
+        ok = true;   /* arquivo válido: sobe a pilha mesmo sem ssid (scan) */
     } else {
         ESP_LOGW(TAG, "config/wifi.lua inválido — Wi-Fi desativado");
     }
     lua_close(L);
     if (ok) ESP_LOGI(TAG, "wifi.lua: ssid=\"%s\" auto=%d", s_ssid, (int)s_auto);
     return ok;
+}
+
+/* Copia p/ buffers fixos do wifi_config sem truncamento silencioso
+ * (satisfaz -Werror=stringop-truncation: clamp + NUL explícito). */
+static void copy_wifi_str(char *dst, size_t cap, const char *src)
+{
+    size_t l = strlen(src);
+    if (l > cap - 1) l = cap - 1;
+    memcpy(dst, src, l);
+    dst[l] = 0;
 }
 
 /* ---------------- eventos ---------------- */
@@ -101,8 +111,8 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
     if (base != WIFI_EVENT) return;
     switch (id) {
     case WIFI_EVENT_STA_START:
-        ESP_LOGI(TAG, "STA up");
-        if (s_auto) esp_wifi_connect();
+        ESP_LOGI(TAG, "STA up (ssid=%s)", s_ssid[0] ? s_ssid : "-");
+        if (s_auto && s_ssid[0]) esp_wifi_connect();
         break;
     case WIFI_EVENT_STA_DISCONNECTED:
         if (s_connected) {
@@ -129,9 +139,10 @@ static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&e->ip_info.ip));
         wifi_net_on_event_ui(true, wifi_net_rssi());
         if (!s_synced) {
-            esp_sntp_config_t cfg = ESP_SNTP_DEFAULT_CONFIG(pda_settings()->ntp_server);
-            cfg.sync_cb = sntp_synced;
-            esp_sntp_init(&cfg);
+            /* IDF 5.5: API legacy do esp_sntp (sem config struct) */
+            esp_sntp_setservername(0, pda_settings()->ntp_server);
+            esp_sntp_set_time_sync_notification_cb(sntp_synced);
+            esp_sntp_init();
         }
     }
 }
@@ -162,8 +173,8 @@ static void wifi_task(void *arg)
 
     wifi_config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
-    strncpy((char *)cfg.sta.ssid, s_ssid, sizeof(cfg.sta.ssid) - 1);
-    strncpy((char *)cfg.sta.password, s_pass, sizeof(cfg.sta.password) - 1);
+    copy_wifi_str((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), s_ssid);
+    copy_wifi_str((char *)cfg.sta.password, sizeof(cfg.sta.password), s_pass);
     cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(WIFI_IF_STA, &cfg);
@@ -182,6 +193,107 @@ esp_err_t wifi_net_init(void)
     if (!load_wifi_lua()) return ESP_ERR_NOT_FOUND;
     BaseType_t ok = xTaskCreate(wifi_task, "wifi_net", 8192, NULL, 4, NULL);
     return (ok == pdPASS) ? ESP_OK : ESP_FAIL;
+}
+
+const char *wifi_net_ssid(void) { return s_ssid; }
+
+static void scan_task(void *arg)
+{
+    void **ctxs = (void **)arg;
+    wifi_net_scan_cb cb = (wifi_net_scan_cb)(uintptr_t)ctxs[0];
+    void *ctx = ctxs[1];
+    free(ctxs);
+
+    wifi_scan_config_t sc = { 0 };
+    sc.scan_time.active.min = 100;
+    sc.scan_time.active.max = 300;
+    wifi_net_ap_t *out = NULL;
+    int n = 0;
+    if (esp_wifi_scan_start(&sc, true) == ESP_OK) {
+        uint16_t total = 0;
+        esp_wifi_scan_get_ap_num(&total);
+        if (total > 16) total = 16;
+        wifi_ap_record_t *rec = (wifi_ap_record_t *)calloc(total, sizeof(*rec));
+        if (rec && esp_wifi_scan_get_ap_records(&total, rec) == ESP_OK) {
+            out = (wifi_net_ap_t *)calloc(total ? total : 1, sizeof(*out));
+            if (out) {
+                for (uint16_t i = 0; i < total; i++) {
+                    copy_wifi_str(out[i].ssid, sizeof(out[i].ssid), (const char *)rec[i].ssid);
+                    out[i].rssi = rec[i].rssi;
+                    out[i].open = (rec[i].authmode == WIFI_AUTH_OPEN);
+                    n = i + 1;
+                }
+                /* ordena por RSSI desc (insertion sort, n<=16) */
+                for (int i = 1; i < n; i++) {
+                    wifi_net_ap_t k = out[i];
+                    int j = i - 1;
+                    while (j >= 0 && out[j].rssi < k.rssi) { out[j + 1] = out[j]; j--; }
+                    out[j + 1] = k;
+                }
+            }
+        }
+        free(rec);
+    }
+    if (cb) cb(out, n, ctx);
+    free(out);
+    vTaskDelete(NULL);
+}
+
+esp_err_t wifi_net_scan(wifi_net_scan_cb cb, void *ctx)
+{
+    void **ctxs = (void **)malloc(2 * sizeof(void *));
+    if (!ctxs) return ESP_ERR_NO_MEM;
+    ctxs[0] = (void *)(uintptr_t)cb;
+    ctxs[1] = ctx;
+    BaseType_t ok = xTaskCreate(scan_task, "wifi_scan", 6144, ctxs, 3, NULL);
+    return (ok == pdPASS) ? ESP_OK : ESP_FAIL;
+}
+
+static void escape_lua_str(char *dst, size_t sz, const char *src)
+{
+    size_t o = 0;
+    for (const char *p = src; *p && o + 2 < sz; p++) {
+        if (*p == '"' || *p == '\\') dst[o++] = '\\';
+        dst[o++] = *p;
+    }
+    dst[o] = '\0';
+}
+
+esp_err_t wifi_net_save_config(const char *ssid, const char *pass)
+{
+    char es[64], ep[128];
+    escape_lua_str(es, sizeof(es), ssid);
+    escape_lua_str(ep, sizeof(ep), pass);
+    char buf[320];
+    int n = snprintf(buf, sizeof(buf),
+        "-- config/wifi.lua (gerado pelo PDA ao conectar/salvar rede)\n"
+        "return {\n"
+        "  ssid = \"%s\",\n"
+        "  password = \"%s\",\n"
+        "  auto_connect = true,\n"
+        "}\n", es, ep);
+    if (n <= 0 || (size_t)n >= sizeof(buf)) return ESP_ERR_INVALID_SIZE;
+    char path[160];
+    if (pda_path(path, sizeof(path), "config/wifi.lua") != ESP_OK) return ESP_ERR_INVALID_SIZE;
+    return storage_write_text_file(path, buf, (size_t)n);
+}
+
+esp_err_t wifi_net_connect(const char *ssid, const char *pass, bool save)
+{
+    snprintf(s_ssid, sizeof(s_ssid), "%s", ssid);
+    snprintf(s_pass, sizeof(s_pass), "%s", pass);
+    s_auto = true;
+    if (save) wifi_net_save_config(ssid, pass);
+
+    wifi_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    copy_wifi_str((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), ssid);
+    copy_wifi_str((char *)cfg.sta.password, sizeof(cfg.sta.password), pass);
+    cfg.sta.threshold.authmode = pass[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+    if (err != ESP_OK) return err;
+    esp_wifi_disconnect();
+    return esp_wifi_connect();
 }
 
 bool wifi_net_connected(void) { return s_connected; }

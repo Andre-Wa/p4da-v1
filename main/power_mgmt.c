@@ -17,6 +17,7 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "power_mgmt";
 
@@ -26,6 +27,7 @@ static pda_power_standby_cb s_standby_cb = NULL;
 static void *s_standby_ctx = NULL;
 static pda_power_hibernate_save_cb s_hib_save_cb = NULL;
 static void *s_hib_ctx = NULL;
+static SemaphoreHandle_t s_wake_sem = NULL;
 
 #ifndef BOARD_BOOT_BTN_ACTIVE_LEVEL
 #define BOARD_BOOT_BTN_ACTIVE_LEVEL 0   /* botão BOOT p/ GND (ativo baixo) */
@@ -35,6 +37,9 @@ static void *s_hib_ctx = NULL;
 void power_mgmt_activity(void)
 {
     s_last_activity_us = esp_timer_get_time();
+    if (s_state == PDA_PWR_STANDBY && s_wake_sem) {
+        xSemaphoreGive(s_wake_sem);   /* modo idle: qualquer atividade acorda */
+    }
     if (s_state == PDA_PWR_DIM) {
         s_state = PDA_PWR_ACTIVE;
         board_display_backlight_set((uint8_t)pda_settings()->brightness);
@@ -62,6 +67,15 @@ void power_mgmt_set_hibernate_save_cb(pda_power_hibernate_save_cb cb, void *ctx)
 /* ------------------------------------------------------------------ */
 static void enter_standby(void);
 void power_mgmt_hibernate(void);
+
+/* Wake por GPIO no modo idle (sem light sleep): ISR dá o semáforo. */
+static void IRAM_ATTR wake_gpio_isr(void *arg)
+{
+    (void)arg;
+    BaseType_t hw = pdFALSE;
+    xSemaphoreGiveFromISR(s_wake_sem, &hw);
+    if (hw) portYIELD_FROM_ISR();
+}
 
 static void configure_wake_gpios(bool wake_on_touch)
 {
@@ -93,42 +107,65 @@ static void configure_wake_gpios(bool wake_on_touch)
     esp_sleep_enable_gpio_wakeup();
 }
 
+bool power_mgmt_light_sleep_active(void)
+{
+    /* 2026-09-24: o caminho light sleep crasha no wake (remount do SDMMC
+     * compartilhado com o ESP-Hosted + Instruction access fault no core 1)
+     * e o wake por BOTÃO/toque não disparava confiavelmente. Desativado
+     * até o rework (ROADMAP "M-power"); o standby robusto cobre o uso
+     * diário e o HIBERNATE cobre a economia máxima. */
+    (void)0;
+    return false;
+}
+
 static void enter_standby(void)
 {
     const pda_settings_t *cfg = pda_settings();
     s_state = PDA_PWR_STANDBY;
-    ESP_LOGI(TAG, "entrando em STANDBY (light sleep)");
+    ESP_LOGI(TAG, "entrando em STANDBY (%s)",
+             power_mgmt_light_sleep_active() ? "light sleep" : "idle robusto");
 
     if (s_standby_cb) s_standby_cb(true, s_standby_ctx);
 
     board_display_backlight_set(0);
     board_display_panel_blank(true);
 
-    configure_wake_gpios(cfg->wake_on_touch);
-
-    /* Timer apenas como gatilho p/ hibernação automática (se habilitada). */
-    if (cfg->deep_sleep_after_s > 0) {
-        esp_sleep_enable_timer_wakeup((uint64_t)cfg->deep_sleep_after_s * 1000000ULL);
-    }
-
-    for (;;) {
-        esp_light_sleep_start();
-        esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-        if (cause == ESP_SLEEP_WAKEUP_GPIO) break;
-        if (cause == ESP_SLEEP_WAKEUP_TIMER && cfg->deep_sleep_after_s > 0) {
-            /* acordou pelo timer e ninguém mexeu: hiberna (noreturn) */
-            ESP_LOGI(TAG, "idle longo -> hibernando");
-            power_mgmt_hibernate();
+    if (power_mgmt_light_sleep_active()) {
+        /* Modo experimental (hoje inalcançável, ver kill-switch): menor consumo, MAS SDMMC/SDIO(hosted)/USB-DWC2
+         * não sobrevivem ao light sleep no P4 — o wake exige remount do SD
+         * e reinstall do USB (ver main.cpp standby_cb e docs/POWER.md). */
+        configure_wake_gpios(cfg->wake_on_touch);
+        if (cfg->deep_sleep_after_s > 0) {
+            esp_sleep_enable_timer_wakeup((uint64_t)cfg->deep_sleep_after_s * 1000000ULL);
         }
-        /* outro cause qualquer: volta a dormir */
+        for (;;) {
+            esp_light_sleep_start();
+            esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+            if (cause == ESP_SLEEP_WAKEUP_GPIO) break;
+            if (cause == ESP_SLEEP_WAKEUP_TIMER && cfg->deep_sleep_after_s > 0) {
+                ESP_LOGI(TAG, "idle longo -> hibernando");
+                power_mgmt_hibernate();
+            }
+        }
+    } else {
+        /* Modo robusto (default): CPU idle, periféricos VIVOS. O consumo
+         * economizado vem de backlight 0 + painel blank. Wake por ISR de
+         * GPIO (botão/toque) ou por qualquer atividade de UI/USB. */
+        xSemaphoreTake(s_wake_sem, 0);   /* drain */
+        if (cfg->deep_sleep_after_s > 0) {
+            if (xSemaphoreTake(s_wake_sem,
+                               pdMS_TO_TICKS((uint32_t)cfg->deep_sleep_after_s * 1000U)) == pdFALSE) {
+                ESP_LOGI(TAG, "idle longo -> hibernando");
+                power_mgmt_hibernate();   /* noreturn */
+            }
+        } else {
+            xSemaphoreTake(s_wake_sem, portMAX_DELAY);
+        }
     }
 
-    /* ---- acordou por GPIO ---- */
+    /* ---- acordou ---- */
     s_state = PDA_PWR_ACTIVE;
     s_last_activity_us = esp_timer_get_time();
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
-    if (cfg->deep_sleep_after_s > 0)
-        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
 
     board_display_panel_blank(false);
     board_display_backlight_set((uint8_t)pda_settings()->brightness);
@@ -155,6 +192,14 @@ static void power_task(void *arg)
         const pda_settings_t *cfg = pda_settings();
         int64_t idle_s = (esp_timer_get_time() - s_last_activity_us) / 1000000LL;
 
+        /* Toque em área vazia não gera callback de UI (Slint só reporta
+         * elementos interativos), então o INT do GT911 é pollado aqui:
+         * com wake_on_touch ligado, toque segura o idle/acorda. */
+        if (cfg->wake_on_touch &&
+            gpio_get_level(BOARD_TOUCH_INT_GPIO) == 0) {
+            power_mgmt_activity();
+        }
+
         switch (s_state) {
         case PDA_PWR_ACTIVE:
             if (idle_s >= cfg->dim_after_s) {
@@ -180,6 +225,30 @@ static void power_task(void *arg)
 
 esp_err_t power_mgmt_init(void)
 {
+    if (pda_settings()->light_sleep) {
+        ESP_LOGW(TAG, "power.light_sleep=true no config, mas o modo está "
+                      "desativado (kill-switch) — standby robusto em uso");
+    }
+    s_wake_sem = xSemaphoreCreateBinary();
+    if (!s_wake_sem) return ESP_FAIL;
+
+    /* Configura OS PINOS de wake como entrada c/ pull-up AQUI: no modo
+     * robusto configure_wake_gpios() (light sleep) nunca roda, e sem
+     * input-enable + pull-up o ISR não dispara (botão/toque não acordavam). */
+    gpio_config_t io = {0};
+    io.pin_bit_mask = (1ULL << BOARD_BOOT_BTN_GPIO) | (1ULL << BOARD_TOUCH_INT_GPIO);
+    io.mode = GPIO_MODE_INPUT;
+    io.pull_up_en = GPIO_PULLUP_ENABLE;
+    io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io.intr_type = GPIO_INTR_DISABLE;
+    gpio_config(&io);
+
+    gpio_install_isr_service(0);
+    gpio_set_intr_type(BOARD_BOOT_BTN_GPIO, GPIO_INTR_NEGEDGE);
+    gpio_isr_handler_add(BOARD_BOOT_BTN_GPIO, wake_gpio_isr, NULL);
+    gpio_set_intr_type(BOARD_TOUCH_INT_GPIO, GPIO_INTR_NEGEDGE);
+    gpio_isr_handler_add(BOARD_TOUCH_INT_GPIO, wake_gpio_isr, NULL);
+
     BaseType_t ok = xTaskCreate(power_task, "pda_power", 6144, NULL, 5, NULL);
     return (ok == pdPASS) ? ESP_OK : ESP_FAIL;
 }

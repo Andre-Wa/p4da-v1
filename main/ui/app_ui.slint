@@ -13,6 +13,7 @@ import { NotesListScreen } from "screens/notes.slint";
 import { EditorScreen } from "screens/editor.slint";
 import { ScriptsScreen } from "screens/scripts.slint";
 import { SettingsScreen } from "screens/settings.slint";
+import { NetworksScreen } from "screens/networks.slint";
 
 export enum AppState {
     Launcher,
@@ -21,6 +22,7 @@ export enum AppState {
     Editor,
     Scripts,
     Settings,
+    Networks,
 }
 
 export component AppWindow inherits Window {
@@ -99,6 +101,14 @@ export component AppWindow inherits Window {
     callback run-script(string);
     callback clear-script-log();
 
+    // ---- redes ----
+    in property <[string]> net-ssids;
+    in property <[string]> net-infos;
+    in property <[bool]> net-locked;
+    in property <string> net-current: "";
+    callback net-pick(int);
+    callback net-rescan();
+
     // ---- config ----
     in-out property <float> cfg-brightness: 80;
     in-out property <float> cfg-dim-s: 30;
@@ -106,12 +116,23 @@ export component AppWindow inherits Window {
     in-out property <float> cfg-deep-s: 0;
     in-out property <bool> cfg-wake-touch: false;
     in-out property <bool> cfg-osk-auto: true;
+    in-out property <bool> cfg-light-sleep: false;
     in property <string> cfg-store-info: "";
     in property <string> cfg-batt-info: "";
     callback cfg-save();
     callback cfg-reset();
     callback cfg-sleep-now();
     callback cfg-hibernate();
+
+    // Âncora de rasterização: o software renderer pré-rasteriza apenas os
+    // caracteres presentes em literais ESTÁTICOS do .slint. Sem isto, textos
+    // vindos do C++ (arquivos, notas) perdiam acentos e travessões em runtime.
+    // Latin-1 suplementar + tipográficos, no mesmo font-size do editor.
+    Text {
+        visible: false;
+        font-size: Theme.type-body;
+        text: "¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ–—‘’“”„…†‡•‹›€";
+    }
 
     Timer {
         interval: 1000ms;
@@ -232,6 +253,17 @@ export component AppWindow inherits Window {
                 refresh => { root.request-scripts(); }
                 go-back => { root.app-back(); }
             }
+            if (root.active-app == AppState.Networks) : NetworksScreen {
+                width: 100%;
+                height: 100%;
+                ssids: root.net-ssids;
+                infos: root.net-infos;
+                locked: root.net-locked;
+                current-ssid: root.net-current;
+                pick(i) => { root.net-pick(i); }
+                rescan => { root.net-rescan(); }
+                go-back => { root.app-back(); }
+            }
             if (root.active-app == AppState.Settings) : SettingsScreen {
                 width: 100%;
                 height: 100%;
@@ -241,6 +273,7 @@ export component AppWindow inherits Window {
                 deep-s <=> root.cfg-deep-s;
                 wake-touch <=> root.cfg-wake-touch;
                 osk-auto <=> root.cfg-osk-auto;
+                light-sleep <=> root.cfg-light-sleep;
                 store-info: root.cfg-store-info;
                 battery-info: root.cfg-batt-info;
                 save => { root.cfg-save(); }

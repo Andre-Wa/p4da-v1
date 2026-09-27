@@ -20,6 +20,7 @@ typedef struct {
     int screen_off_after_s;     /* ocioso -> tela off + light sleep  */
     int deep_sleep_after_s;     /* ocioso -> deep sleep + restore SD */
     bool wake_on_touch;         /* [HW?] INT do GT911 como wake source */
+    bool light_sleep;           /* true: light sleep no standby (exp.; SD/SDIO/USB nao sobrevivem no P4) */
     /* locale / rede */
     char timezone[48];          /* ex. "America/Sao_Paulo" (uso futuro) */
     char ntp_server[64];        /* uso futuro (fase Wi-Fi)            */

@@ -56,6 +56,11 @@ void power_mgmt_hibernate(void);
 /** true se este boot veio de um deep sleep (sessão a restaurar). */
 bool power_mgmt_woke_from_hibernate(void);
 
+/** Kill-switch temporário do modo light sleep (ver docs/POWER.md):
+ *  retorna false mesmo com power.light_sleep=true, até o rework do
+ *  wake/remount do SDMMC compartilhado com o hosted. */
+bool power_mgmt_light_sleep_active(void);
+
 void power_mgmt_set_standby_cb(pda_power_standby_cb cb, void *ctx);
 void power_mgmt_set_hibernate_save_cb(pda_power_hibernate_save_cb cb, void *ctx);
 

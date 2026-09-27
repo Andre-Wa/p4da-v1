@@ -33,3 +33,12 @@ O slave que vem de fábrica (2.3.0) não casa com host 2.12.x
   volta a uptime até o próximo sync.
 - Bluetooth (M4b): mesmo transporte, stack BT no host via hosted HCI —
   ainda não iniciado.
+
+## Nota de API (IDF 5.5)
+O `esp_sntp.h` da 5.5 é a API **legacy**: `esp_sntp_init(void)` +
+`esp_sntp_setservername()` + `esp_sntp_set_time_sync_notification_cb()`.
+A variante com `esp_sntp_config_t`/`ESP_SNTP_DEFAULT_CONFIG` só existe em
+IDF mais novo — não usar enquanto estivermos pinados em 5.5.x.
+- Callbacks implementados em `main.cpp` e chamados de código C
+  (`wifi_net_on_event_ui`) PRECISAM de `extern "C"` na definição, senão
+  o link falha com undefined reference (mangling C++ vs C).

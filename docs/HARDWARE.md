@@ -114,3 +114,14 @@ afetar placas sem o mod. Não feito em M1 de propósito.
 
 *Não confundir*: o botão **BOOT (GPIO35, strapping)** é outro componente,
 em outro ponto da placa, e esse o firmware lê (wake do light sleep).
+
+## SD (slot 0) × SDIO do C6 (slot 1) — NÃO trocar
+
+No ESP32-P4 o periférico SDMMC tem dois slots: **slot 0 = IOMUX fixo do
+microSD** (GPIO 43/44/39-42 desta placa) e **slot 1 = GPIO-matrix, usado
+pelo ESP-Hosted/SDIO do C6** (18/19/14-17). `SDMMC_SLOT_CONFIG_DEFAULT()`
+cai no slot 1: montar o cartão lá fazia hosted e cartão brigarem pelo
+periférico (`sdmmc_card_init failed` no hosted, `0x107` no cartão e
+leituras corrompidas de `system.lua` disparando a "cura" a cada boot).
+`storage_init.c` fixa `host.slot = 0`. Se um dia o SD ou o Wi-Fi
+"morrerem" juntos, suspeite disso primeiro.

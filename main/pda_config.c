@@ -33,6 +33,7 @@ static void apply_defaults(pda_settings_t *s)
     s->screen_off_after_s = 120;
     s->deep_sleep_after_s = 600;
     s->wake_on_touch = false;
+    s->light_sleep = false;
     strlcpy(s->timezone, "America/Sao_Paulo", sizeof(s->timezone));
     strlcpy(s->ntp_server, "pool.ntp.org", sizeof(s->ntp_server));
     s->onscreen_keyboard_auto = true;
@@ -78,10 +79,24 @@ static void tbl_str(lua_State *L, int idx, const char *name, char *out, size_t s
 static bool clamp_all(pda_settings_t *s)
 {
     pda_settings_t before = *s;
-    if (s->brightness < 0 || s->brightness > 100) s->brightness = 80;
-    if (s->dim_after_s < 5 || s->dim_after_s > 600) s->dim_after_s = 30;
-    if (s->screen_off_after_s < 10 || s->screen_off_after_s > 1800) s->screen_off_after_s = 120;
-    if (s->deep_sleep_after_s < 0 || s->deep_sleep_after_s > 7200) s->deep_sleep_after_s = 600;
+    /* loga campo a campo: sem isto, "valores fora de faixa" não dizia
+     * QUAL campo vinha insano do arquivo (boot de 2026-09-24). */
+    if (s->brightness < 0 || s->brightness > 100) {
+        ESP_LOGW(TAG, "sanitize: brightness=%d -> 80", s->brightness);
+        s->brightness = 80;
+    }
+    if (s->dim_after_s < 5 || s->dim_after_s > 600) {
+        ESP_LOGW(TAG, "sanitize: dim_after_s=%d -> 30", s->dim_after_s);
+        s->dim_after_s = 30;
+    }
+    if (s->screen_off_after_s < 10 || s->screen_off_after_s > 1800) {
+        ESP_LOGW(TAG, "sanitize: screen_off_after_s=%d -> 120", s->screen_off_after_s);
+        s->screen_off_after_s = 120;
+    }
+    if (s->deep_sleep_after_s < 0 || s->deep_sleep_after_s > 7200) {
+        ESP_LOGW(TAG, "sanitize: deep_sleep_after_s=%d -> 600", s->deep_sleep_after_s);
+        s->deep_sleep_after_s = 600;
+    }
     /* ordenação (ajuste silencioso, não é "veneno") */
     if (s->screen_off_after_s < s->dim_after_s + 5)
         s->screen_off_after_s = s->dim_after_s + 5;
@@ -128,6 +143,7 @@ static esp_err_t parse_file(const char *path, pda_settings_t *out)
         tmp.screen_off_after_s = tbl_int(L, -1, "screen_off_after_s", tmp.screen_off_after_s);
         tmp.deep_sleep_after_s = tbl_int(L, -1, "deep_sleep_after_s", tmp.deep_sleep_after_s);
         tmp.wake_on_touch = tbl_bool(L, -1, "wake_on_touch", tmp.wake_on_touch);
+        tmp.light_sleep = tbl_bool(L, -1, "light_sleep", tmp.light_sleep);
     }
     lua_pop(L, 1);
 
@@ -169,6 +185,7 @@ static esp_err_t serialize_to(const char *path, const pda_settings_t *s)
         "    screen_off_after_s = %d,    -- degrau 2: tela off + light sleep\n"
         "    deep_sleep_after_s = %d,    -- degrau 3: deep sleep (restore do SD)\n"
         "    wake_on_touch = %s,    -- wake por touch (INT GT911)\n"
+        "    light_sleep = %s,       -- true: light sleep no standby (exp.)\n"
         "  },\n"
         "  locale = {\n"
         "    timezone = \"%s\",\n"
@@ -181,6 +198,7 @@ static esp_err_t serialize_to(const char *path, const pda_settings_t *s)
         s->brightness,
         s->dim_after_s, s->screen_off_after_s, s->deep_sleep_after_s,
         s->wake_on_touch ? "true" : "false",
+        s->light_sleep ? "true" : "false",
         s->timezone, s->ntp_server,
         s->onscreen_keyboard_auto ? "true" : "false");
     if (n <= 0 || (size_t)n >= sizeof(buf)) return ESP_ERR_INVALID_SIZE;
@@ -202,7 +220,9 @@ esp_err_t pda_config_save(void)
         serialize_to("/internal/pda/config/system.lua", &s_cfg);
     }
     s_dirty = false;
-    ESP_LOGI(TAG, "config salva em %s", path);
+    ESP_LOGI(TAG, "config salva em %s (br=%d dim=%d off=%d deep=%d)", path,
+             s_cfg.brightness, s_cfg.dim_after_s, s_cfg.screen_off_after_s,
+             s_cfg.deep_sleep_after_s);
     return ESP_OK;
 }
 
@@ -228,19 +248,24 @@ esp_err_t pda_config_init(void)
             return pda_config_save();
         }
     }
+    bool healed = false;
     esp_err_t err = parse_file(path, &s_cfg);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "mantendo defaults em memória (arquivo inválido)");
         clamp_all(&s_cfg);
+        healed = true;
     } else if (clamp_all(&s_cfg)) {
         /* arquivo continha valores fora de faixa (ex.: INT_MAX do bug de
-         * NaN): saneia em memória e CURA o arquivo agora, para o lixo não
-         * se propagar em cada save subsequente. */
+         * NaN, ou leituras corrompidas do SD): saneia em memória e CURA o
+         * arquivo agora, para o lixo não se propagar em cada save. */
         ESP_LOGW(TAG, "system.lua com valores fora de faixa — saneando e regravando");
         pda_config_save();
+        healed = true;
     }
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "system.lua intacto — nenhuma regravação no boot");
+        if (!healed) {
+            ESP_LOGI(TAG, "system.lua intacto — nenhuma regravação no boot");
+        }
         ESP_LOGI(TAG, "config carregada: brilho=%d dim=%ds off=%ds deep=%ds",
                  s_cfg.brightness, s_cfg.dim_after_s,
                  s_cfg.screen_off_after_s, s_cfg.deep_sleep_after_s);
@@ -278,6 +303,7 @@ bool pda_settings_get(const char *key, double *out_num, bool *out_bool,
     if (!strcmp(key, "power.screen_off_after_s")) { if (out_num) *out_num = s_cfg.screen_off_after_s; return true; }
     if (!strcmp(key, "power.deep_sleep_after_s")) { if (out_num) *out_num = s_cfg.deep_sleep_after_s; return true; }
     if (!strcmp(key, "power.wake_on_touch")) { if (out_bool) *out_bool = s_cfg.wake_on_touch; return true; }
+    if (!strcmp(key, "power.light_sleep")) { if (out_bool) *out_bool = s_cfg.light_sleep; return true; }
     if (!strcmp(key, "ui.onscreen_keyboard_auto")) { if (out_bool) *out_bool = s_cfg.onscreen_keyboard_auto; return true; }
     if (!strcmp(key, "locale.timezone")) { if (out_str) strlcpy(out_str, s_cfg.timezone, str_sz); return true; }
     if (!strcmp(key, "locale.ntp_server")) { if (out_str) strlcpy(out_str, s_cfg.ntp_server, str_sz); return true; }
@@ -292,6 +318,7 @@ bool pda_settings_set(const char *key, double num, bool is_bool, bool bool_val, 
     else if (!strcmp(key, "power.screen_off_after_s")) { s_cfg.screen_off_after_s = (int)num; }
     else if (!strcmp(key, "power.deep_sleep_after_s")) { s_cfg.deep_sleep_after_s = (int)num; }
     else if (!strcmp(key, "power.wake_on_touch")) { s_cfg.wake_on_touch = is_bool ? bool_val : (num != 0); }
+    else if (!strcmp(key, "power.light_sleep")) { s_cfg.light_sleep = is_bool ? bool_val : (num != 0); }
     else if (!strcmp(key, "ui.onscreen_keyboard_auto")) { s_cfg.onscreen_keyboard_auto = is_bool ? bool_val : (num != 0); }
     else if (!strcmp(key, "locale.timezone")) { if (!str) return false; strlcpy(s_cfg.timezone, str, sizeof(s_cfg.timezone)); }
     else if (!strcmp(key, "locale.ntp_server")) { if (!str) return false; strlcpy(s_cfg.ntp_server, str, sizeof(s_cfg.ntp_server)); }

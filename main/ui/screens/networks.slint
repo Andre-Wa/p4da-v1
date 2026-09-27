@@ -1,0 +1,87 @@
+// screens/networks.slint — redes Wi-Fi (scan + conexão por toque)
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { TonalButton, GhostButton } from "../elements/buttons.slint";
+import { Surface, ScreenTitle } from "../elements/surfaces.slint";
+import { IconLock, IconWifi } from "../elements/icons.slint";
+
+export component NetworksScreen inherits Rectangle {
+    in property <[string]> ssids;
+    in property <[string]> infos;
+    in property <[bool]> locked;
+    in property <string> current-ssid;
+    callback pick(int);
+    callback rescan();
+    callback go-back();
+
+    VerticalLayout {
+        padding: Theme.sp-lg;
+        spacing: Theme.sp-md;
+
+        HorizontalLayout {
+            spacing: Theme.sp-sm;
+            ScreenTitle { label: "Redes Wi-Fi"; horizontal-stretch: 1; }
+            TonalButton { width: 90px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Buscar"; clicked => { root.rescan(); } }
+            GhostButton { width: 90px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Voltar"; clicked => { root.go-back(); } }
+        }
+
+        Text {
+            text: "Conectada: " + root.current-ssid;
+            font-size: Theme.type-label;
+            color: Theme.on-surface-var;
+        }
+
+        Surface {
+            level: 1;
+            vertical-stretch: 1;
+            clip: true;
+
+            ListView {
+                width: 100%;
+                height: 100%;
+                for s[i] in root.ssids: Rectangle {
+                    height: Theme.row-h;
+                    clip: true;
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.pick(i); }
+                    }
+                    if root.locked[i]: IconLock {
+                        x: Theme.sp-md;
+                        height: 100%;
+                        size: Theme.type-body;
+                        tint: Theme.tertiary;
+                    }
+                    if !root.locked[i]: IconWifi {
+                        x: Theme.sp-md;
+                        height: 100%;
+                        size: Theme.type-body;
+                        tint: Theme.success;
+                    }
+                    Text {
+                        x: Theme.sp-md + 26px;
+                        width: parent.width - (Theme.sp-md + 26px) - 110px;
+                        height: 100%;
+                        text: s;
+                        color: Theme.on-surface;
+                        font-size: Theme.type-body;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        x: parent.width - 100px;
+                        width: 90px;
+                        height: 100%;
+                        text: root.infos[i];
+                        color: Theme.on-surface-var;
+                        font-size: Theme.type-label;
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                    }
+                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.outline-var; }
+                }
+            }
+        }
+    }
+}

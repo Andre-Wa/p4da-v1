@@ -26,6 +26,7 @@
 #include "freertos/semphr.h"
 
 #include <cstring>
+#include <atomic>
 
 static const char *TAG = "usb_hid_kbd";
 
@@ -39,7 +40,7 @@ static SemaphoreHandle_t s_lib_done_sem = NULL; /* lib task avisou que saiu */
 
 #define USB_KBD_MAX_IFACES 4
 static hid_host_device_handle_t s_devs[USB_KBD_MAX_IFACES] = { nullptr };
-static volatile int s_conn_count = 0;
+static std::atomic<int> s_conn_count{0};
 
 static uint8_t s_prev_keys[6] = { 0 };
 
@@ -82,7 +83,7 @@ static void track_add(hid_host_device_handle_t h)
     for (int i = 0; i < USB_KBD_MAX_IFACES; i++) {
         if (s_devs[i] == nullptr) { s_devs[i] = h; break; }
     }
-    s_conn_count++;
+    s_conn_count.fetch_add(1);
     if (s_event_cb) s_event_cb(true);
 }
 
@@ -93,11 +94,11 @@ static void track_remove(hid_host_device_handle_t h)
         if (s_devs[i] == h) { s_devs[i] = nullptr; found = true; }
     }
     if (!found) return;
-    if (s_conn_count > 0) s_conn_count--;
-    if (s_event_cb) s_event_cb(s_conn_count > 0);
+    if (s_conn_count.load() > 0) s_conn_count.fetch_sub(1);
+    if (s_event_cb) s_event_cb(s_conn_count.load() > 0);
 }
 
-bool usb_hid_keyboard_connected(void) { return s_conn_count > 0; }
+bool usb_hid_keyboard_connected(void) { return s_conn_count.load() > 0; }
 
 /* ------------------------------------------------------------------ */
 static void hid_keyboard_report_callback(const uint8_t *const data, int length)
@@ -213,10 +214,9 @@ static void hid_host_device_event(hid_host_device_handle_t hid_device_handle,
 /* ------------------------------------------------------------------ */
 static void usb_host_lib_task(void *arg)
 {
-    const usb_host_config_t host_config = {
-        .skip_phy_setup = false,
-        .intr_flags = ESP_INTR_FLAG_LEVEL1,
-    };
+    usb_host_config_t host_config = {};
+    host_config.skip_phy_setup = false;
+    host_config.intr_flags = ESP_INTR_FLAG_LEVEL1;
     if (usb_host_install(&host_config) != ESP_OK) {
         ESP_LOGE(TAG, "usb_host_install falhou");
         xTaskNotifyGive((TaskHandle_t)arg);
@@ -288,7 +288,7 @@ void usb_hid_keyboard_prepare_sleep(void)
             s_devs[i] = nullptr;
         }
     }
-    s_conn_count = 0;
+    s_conn_count.store(0);
 
     /* 1) pede à lib task para sair quando o barramento esvaziar; */
     s_shutdown = true;

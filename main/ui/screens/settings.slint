@@ -11,6 +11,7 @@ export component SettingsScreen inherits Rectangle {
     in-out property <float> deep-s: 0;
     in-out property <bool> wake-touch: false;
     in-out property <bool> osk-auto: true;
+    in-out property <bool> light-sleep: false;
     in property <string> store-info;
     in property <string> battery-info;
     callback save();
@@ -50,7 +51,7 @@ export component SettingsScreen inherits Rectangle {
             }
         }
 
-        HorizontalLayout {
+        VerticalLayout {
             spacing: Theme.sp-xl;
             HorizontalLayout {
                 alignment: start;
@@ -63,6 +64,12 @@ export component SettingsScreen inherits Rectangle {
                 spacing: Theme.sp-xs;
                 Text { text: "Teclado virtual só sem USB"; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
                 CheckBox { checked <=> root.osk-auto; }
+            }
+            HorizontalLayout {
+                alignment: start;
+                spacing: Theme.sp-xs;
+                Text { text: "Light sleep no standby (exp.: quebra SD/Wi-Fi/USB no wake)"; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
+                CheckBox { checked <=> root.light-sleep; }
             }
         }
 

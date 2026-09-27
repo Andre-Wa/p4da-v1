@@ -25,14 +25,20 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_pthread.h"
+#include "esp_heap_caps.h"
 
 #include <vector>
 #include <string>
 #include <mutex>
 #include <thread>
+#include <functional>
+#include <new>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <strings.h>
 #include <utility>
 #include <dirent.h>
@@ -69,15 +75,36 @@ static void nav_back(void);
 
 /** std::thread com pilha explícita: o default do IDF (~3K) estoura a VM Lua
  *  e é apertado p/ readdir+FATFS. Chamado NA task que cria a thread. */
-template <typename F>
-static std::thread spawn_thread(const char *name, size_t stack, F &&fn)
+/* Threads de I/O e de scripts como tasks FreeRTOS com pilha em PSRAM:
+ * a RAM interna ficou escassa com o ESP-Hosted e o std::thread falhava
+ * com "pthread: Failed to create task!" -> exceção -> abort (2026-09-24).
+ * Semântica de detach: a task se auto-apaga ao terminar. */
+struct ThreadCtx {
+    std::function<void()> fn;
+};
+
+static void thread_trampoline(void *arg)
 {
-    esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
-    cfg.thread_name = name;
-    cfg.stack_size = stack;
-    cfg.prio = 5;
-    esp_pthread_set_cfg(&cfg);
-    return std::thread(std::forward<F>(fn));
+    ThreadCtx *c = static_cast<ThreadCtx *>(arg);
+    c->fn();
+    delete c;
+    vTaskDelete(NULL);
+}
+
+template <typename F>
+static void spawn_thread(const char *name, size_t stack, F &&fn)
+{
+    ThreadCtx *ctx = new (std::nothrow) ThreadCtx { std::forward<F>(fn) };
+    if (!ctx) {
+        ESP_LOGE(TAG, "spawn_thread(%s): sem memória p/ contexto", name);
+        return;
+    }
+    BaseType_t ok = xTaskCreateWithCaps(thread_trampoline, name, (uint32_t)stack,
+                                        ctx, 5, NULL, MALLOC_CAP_SPIRAM);
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG, "spawn_thread(%s): xTaskCreateWithCaps falhou", name);
+        delete ctx;
+    }
 }
 
 static void log_line(const char *line, void *ctx)
@@ -113,8 +140,48 @@ static void settings_changed_by_lua(void)
     slint::invoke_from_event_loop([]() { apply_brightness_from_settings(); });
 }
 
+/* ---------------- redes (M4b) ---------------- */
+static std::vector<wifi_net_ap_t> g_aps;
+static std::string g_wifi_pick_ssid;
+
+static void on_scan_done(const wifi_net_ap_t *aps, int count, void *ctx)
+{
+    (void)ctx;
+    g_aps.clear();
+    for (int i = 0; i < count; i++) g_aps.push_back(aps[i]);
+    auto ssids = std::make_shared<slint::VectorModel<slint::SharedString>>();
+    auto infos = std::make_shared<slint::VectorModel<slint::SharedString>>();
+    auto locked = std::make_shared<slint::VectorModel<bool>>();
+    for (int i = 0; i < count; i++) {
+        ssids->push_back(slint::SharedString(aps[i].ssid));
+        char b[24];
+        snprintf(b, sizeof(b), "%d dBm", aps[i].rssi);
+        infos->push_back(slint::SharedString(b));
+        locked->push_back(!aps[i].open);
+    }
+    if (count == 0) {
+        ssids->push_back(slint::SharedString("(nenhuma rede encontrada)"));
+        infos->push_back(slint::SharedString(""));
+        locked->push_back(false);
+    }
+    slint::invoke_from_event_loop([ssids, infos, locked]() {
+        g_ui->set_net_ssids(ssids);
+        g_ui->set_net_infos(infos);
+        g_ui->set_net_locked(locked);
+        g_ui->set_net_current(slint::SharedString(
+            wifi_net_connected() ? wifi_net_ssid() : "(offline)"));
+    });
+}
+
+static void net_start_scan(void)
+{
+    if (wifi_net_scan(on_scan_done, NULL) != ESP_OK) {
+        log_line("[erro] scan não iniciado", NULL);
+    }
+}
+
 /* ---------------- relógio da status bar --------------------------- */
-void wifi_net_on_event_ui(bool connected, int rssi)
+extern "C" void wifi_net_on_event_ui(bool connected, int rssi)
 {
     char buf[40];
     if (connected) snprintf(buf, sizeof(buf), "wifi %d dBm", rssi);
@@ -183,15 +250,19 @@ static bool ed_osk_should_show(void)
     return pda_settings()->onscreen_keyboard_auto && !usb_hid_keyboard_connected();
 }
 
-/* linhas de exibição = linhas reais com "|" injetado na coluna do cursor */
+/* linhas de exibição = linhas reais com "|" injetado na coluna do cursor.
+ * O modelo Slint é PERSISTENTE e atualizado por linha (set_row_data):
+ * trocar o modelo inteiro resetava o viewport-y do Flickable a cada
+ * tecla (bug de scroll reportado 3x). */
+static std::shared_ptr<slint::VectorModel<slint::SharedString>> g_ed_model;
+static std::vector<std::string> g_ed_cache;
+
 static void ed_push_ui(bool scroll_to_cursor)
 {
-    auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
     std::vector<std::string> lines;
     int cursor_line = 0, cursor_col = 0;
     {
-        size_t i = 0, line_idx = 0;
-        size_t line_start = 0;
+        size_t i = 0, line_idx = 0, line_start = 0;
         for (; i <= g_ed.text.size(); i++) {
             if (i == g_ed.text.size() || g_ed.text[i] == '\n') {
                 lines.push_back(g_ed.text.substr(line_start, i - line_start));
@@ -206,39 +277,56 @@ static void ed_push_ui(bool scroll_to_cursor)
     }
     if (lines.empty()) lines.push_back("");
 
+    std::vector<std::string> disp = lines;
+    if ((size_t)cursor_col > disp[cursor_line].size())
+        cursor_col = (int)disp[cursor_line].size();
+    disp[cursor_line].insert(disp[cursor_line].begin() + cursor_col, '|');
+
     size_t maxw = 0;
-    for (size_t i = 0; i < lines.size(); i++) {
-        size_t w = lines[i].size() + ((int)i == cursor_line ? 1 : 0);
-        if (w > maxw) maxw = w;
+    for (auto &d : disp) if (d.size() > maxw) maxw = d.size();
+
+    if (!g_ed_model) {
+        g_ed_model = std::make_shared<slint::VectorModel<slint::SharedString>>();
+        g_ui->set_ed_lines(g_ed_model);
     }
-    for (size_t i = 0; i < lines.size(); i++) {
-        if ((int)i == cursor_line) {
-            std::string l = lines[i];
-            if ((size_t)cursor_col > l.size()) cursor_col = (int)l.size();
-            l.insert(l.begin() + cursor_col, '|');
-            model->push_back(slint::SharedString(l));
-        } else {
-            model->push_back(slint::SharedString(lines[i]));
+    if (g_ed_cache.size() != disp.size()) {
+        std::vector<slint::SharedString> vv;
+        vv.reserve(disp.size());
+        for (auto &d : disp) vv.push_back(slint::SharedString(d));
+        g_ed_model->set_vector(std::move(vv));
+    } else {
+        for (size_t i = 0; i < disp.size(); i++) {
+            if (g_ed_cache[i] != disp[i])
+                g_ed_model->set_row_data(i, slint::SharedString(disp[i]));
         }
     }
+    g_ed_cache = disp;
 
-    g_ui->set_ed_lines(model);
-    g_ui->set_ed_line_count((int)lines.size());
-    g_ui->set_ed_content_w((float)(maxw * ED_CHAR_W + 60));
+    g_ui->set_ed_line_count((int)disp.size());
+    float want_w = (float)(maxw * ED_CHAR_W + 60);
+    if (fabsf(want_w - g_ui->get_ed_content_w()) > 0.5f)
+        g_ui->set_ed_content_w(want_w);
     g_ui->set_ed_title(slint::SharedString(ed_title()));
     g_ui->set_ed_dirty(g_ed.dirty);
     g_ui->set_ed_can_delete(g_ed.path.rfind(notes_dir() + "/", 0) == 0);
     g_ui->set_ed_show_osk(ed_osk_should_show());
 
-    if (scroll_to_cursor) {
-        int content_h = (int)(lines.size() * ED_LINE_H) + 40;
+    {
+        int content_h = (int)(disp.size() * ED_LINE_H) + 40;
         int area_h = (int)(480 - ED_STATUS_H - (ED_BTN_SM + 14) - 16 -
                      (ed_osk_should_show() ? ED_OSK_H + 6 : 0));
-        int target = (int)(cursor_line * ED_LINE_H) - area_h / 2;
-        if (target < 0) target = 0;
         int maxy = content_h - area_h;
-        if (target > maxy) target = maxy > 0 ? maxy : 0;
-        g_ui->set_ed_scroll_y((float)target);
+        if (maxy < 0) maxy = 0;
+        int top = (int)g_ui->get_ed_scroll_y();
+        int target = top;
+        if (scroll_to_cursor) {
+            int cy = (int)(cursor_line * ED_LINE_H);
+            if (cy < top) target = cy;
+            else if (cy + (int)ED_LINE_H > top + area_h) target = cy + (int)ED_LINE_H - area_h;
+        }
+        if (target < 0) target = 0;
+        if (target > maxy) target = maxy;
+        if (target != top) g_ui->set_ed_scroll_y((float)target);
     }
 }
 
@@ -251,11 +339,41 @@ static void ed_insert_str(const char *s, size_t n)
     ed_push_ui(true);
 }
 
+/* ---- UTF-8: o cursor anda por CODEPOINTS, nunca por bytes ----
+ * Sem isso, setas/backspace em texto acentuado pousavam no meio de uma
+ * sequência multibyte e o Slint (Rust) panicava com UTF-8 inválido
+ * (Guru Meditation em 2026-09-24). */
+static bool utf8_is_cont(char c) { return ((unsigned char)c & 0xC0) == 0x80; }
+
+static size_t utf8_prev(const std::string &t, size_t pos)
+{
+    if (pos == 0) return 0;
+    size_t p = pos - 1;
+    while (p > 0 && utf8_is_cont(t[p])) p--;
+    return p;
+}
+
+static size_t utf8_next(const std::string &t, size_t pos)
+{
+    if (pos >= t.size()) return t.size();
+    size_t n = pos + 1;
+    while (n < t.size() && utf8_is_cont(t[n])) n++;
+    return n;
+}
+
+/* snap p/ trás até um limite de codepoint */
+static size_t utf8_snap(const std::string &t, size_t pos)
+{
+    while (pos > 0 && pos < t.size() && utf8_is_cont(t[pos])) pos--;
+    return pos;
+}
+
 static void ed_backspace(void)
 {
     if (g_ed.cursor == 0 || g_ed.text.empty()) return;
-    g_ed.cursor--;
-    g_ed.text.erase(g_ed.cursor, 1);
+    size_t prev = utf8_prev(g_ed.text, g_ed.cursor);
+    g_ed.text.erase(prev, g_ed.cursor - prev);
+    g_ed.cursor = prev;
     g_ed.dirty = true;
     ed_push_ui(true);
 }
@@ -263,7 +381,8 @@ static void ed_backspace(void)
 static void ed_delete_key(void)
 {
     if (g_ed.cursor >= g_ed.text.size()) return;
-    g_ed.text.erase(g_ed.cursor, 1);
+    size_t next = utf8_next(g_ed.text, g_ed.cursor);
+    g_ed.text.erase(g_ed.cursor, next - g_ed.cursor);
     g_ed.dirty = true;
     ed_push_ui(true);
 }
@@ -304,15 +423,15 @@ static void ed_move(int dcol, int dline, bool home, bool end)
         if (target >= (int)spans.size()) target = (int)spans.size() - 1;
         size_t len = spans[target].second - spans[target].first;
         size_t c = (size_t)col > len ? len : (size_t)col;
-        g_ed.cursor = spans[target].first + c;
+        g_ed.cursor = utf8_snap(g_ed.text, spans[target].first + c);
         (void)ls; (void)idx;
         ed_push_ui(true);
         return;
     }
     if (dcol > 0) {
-        if (g_ed.cursor < g_ed.text.size()) g_ed.cursor++;
+        g_ed.cursor = utf8_next(g_ed.text, g_ed.cursor);
     } else if (dcol < 0) {
-        if (g_ed.cursor > 0) g_ed.cursor--;
+        g_ed.cursor = utf8_prev(g_ed.text, g_ed.cursor);
     }
     ed_push_ui(true);
 }
@@ -349,7 +468,7 @@ static void ed_open_path_async(const std::string path)
         slint::invoke_from_event_loop([path, content]() {
             ed_load(path, content, false);
         });
-    }).detach();
+    });
 }
 
 static void ed_save(void)
@@ -512,7 +631,7 @@ static void list_dir_async(const std::string dir)
             g_ui->set_file_kind(icons);
             g_ui->set_file_path(slint::SharedString(dir));
         });
-    }).detach();
+    });
 }
 
 struct FmState {
@@ -652,7 +771,7 @@ static void refresh_notes_list(void)
         if (count == 0)
             model->push_back(slint::SharedString("(nenhuma nota — toque em + Nova nota)"));
         slint::invoke_from_event_loop([model]() { g_ui->set_notes_list(model); });
-    }).detach();
+    });
 }
 
 /* ================================================================== */
@@ -680,7 +799,7 @@ static void refresh_scripts_list(void)
         if (count == 0)
             model->push_back(slint::SharedString("(sem .lua em scripts/)"));
         slint::invoke_from_event_loop([model]() { g_ui->set_scripts_list(model); });
-    }).detach();
+    });
 }
 
 static void run_script_async(const std::string name)
@@ -703,7 +822,7 @@ static void run_script_async(const std::string name)
             snprintf(msg, sizeof(msg), "<<< %s falhou (ver console)", name.c_str());
         }
         log_line(msg, NULL);
-    }).detach();
+    });
 }
 
 /* ================================================================== */
@@ -767,6 +886,7 @@ static void push_settings_to_ui(void)
     g_ui->set_cfg_deep_s((float)s->deep_sleep_after_s);
     g_ui->set_cfg_wake_touch(s->wake_on_touch);
     g_ui->set_cfg_osk_auto(s->onscreen_keyboard_auto);
+    g_ui->set_cfg_light_sleep(s->light_sleep);
 
     char buf[96];
     storage_sd_describe(buf, sizeof(buf));
@@ -778,6 +898,17 @@ static void push_settings_to_ui(void)
 }
 
 /* ================================================================== */
+/* Heap-allocated de propósito: ComponentHandle não tem ctor default, e o
+ * handle precisa viver para sempre (dono da referência do component). */
+static slint::ComponentHandle<AppWindow> *s_ui_run_handle = nullptr;
+
+static void ui_run_task(void *arg)
+{
+    (void)arg;
+    (*s_ui_run_handle)->run();   /* operator-> devolve AppWindow*, que tem run() */
+    vTaskDelete(NULL);
+}
+
 extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "=== PDA M2 — bring-up ===");
@@ -838,6 +969,10 @@ extern "C" void app_main(void)
             refresh_scripts_list();
             nav_goto(AppState::Scripts);
             s_session_app = "scripts";
+        } else if (n == "Redes") {
+            nav_goto(AppState::Networks);
+            net_start_scan();
+            s_session_app = "launcher";
         } else if (n == "Config") {
             push_settings_to_ui();
             nav_goto(AppState::Settings);
@@ -1007,6 +1142,11 @@ extern "C" void app_main(void)
                     return;
                 }
             }
+        } else if (g_fm.prompt_action == "wifipass") {
+            char msg[200];
+            snprintf(msg, sizeof(msg), "[wifi] conectando em \"%s\"", g_wifi_pick_ssid.c_str());
+            log_line(msg, NULL);
+            wifi_net_connect(g_wifi_pick_ssid.c_str(), g_fm.prompt_text.c_str(), true);
         } else if (g_fm.prompt_action == "delete") {
             esp_err_t err = storage_rm_rf(target.c_str());
             snprintf(msg, sizeof(msg), err == ESP_OK ? "[ok] apagado: %s" : "[erro] apagar (%s)",
@@ -1021,6 +1161,29 @@ extern "C" void app_main(void)
         activity();
         g_fm.prompt = false;
         push_fm_ui();
+    });
+    ui->on_net_rescan([]() {
+        activity();
+        net_start_scan();
+    });
+    ui->on_net_pick([](int i) {
+        activity();
+        if (i < 0 || (size_t)i >= g_aps.size()) return;
+        const wifi_net_ap_t &ap = g_aps[i];
+        if (ap.open) {
+            char msg[160];
+            snprintf(msg, sizeof(msg), "[wifi] conectando em \"%s\" (aberta)", ap.ssid);
+            log_line(msg, NULL);
+            wifi_net_connect(ap.ssid, "", true);
+        } else {
+            g_wifi_pick_ssid = ap.ssid;
+            g_fm.prompt = true;
+            g_fm.prompt_needs_text = true;
+            g_fm.prompt_title = "Senha para \"" + g_wifi_pick_ssid + "\":";
+            g_fm.prompt_text = "";
+            g_fm.prompt_action = "wifipass";
+            push_fm_ui();
+        }
     });
     ui->on_app_back([]() {
         activity();
@@ -1135,6 +1298,10 @@ extern "C" void app_main(void)
         s.deep_sleep_after_s = (int)g_ui->get_cfg_deep_s();
         s.wake_on_touch = g_ui->get_cfg_wake_touch();
         s.onscreen_keyboard_auto = g_ui->get_cfg_osk_auto();
+        s.light_sleep = g_ui->get_cfg_light_sleep();
+        ESP_LOGI(TAG, "cfg-save UI: br=%f dim=%f off=%f deep=%f",
+                 (double)g_ui->get_cfg_brightness(), (double)g_ui->get_cfg_dim_s(),
+                 (double)g_ui->get_cfg_off_s(), (double)g_ui->get_cfg_deep_s());
         pda_settings_update(&s);
         pda_config_save();
         apply_brightness_from_settings();
@@ -1187,12 +1354,19 @@ extern "C" void app_main(void)
 
     /* ---------- power ---------- */
     power_mgmt_set_standby_cb([](bool entering, void *) {
+        /* Teardown/re-init de periféricos SOMENTE no modo light sleep
+         * (hoje atrás do kill-switch). No standby robusto a CPU fica idle
+         * e SD/USB/Wi-Fi permanecem vivos — remontar aqui era o que
+         * derrubava USB e SD sem necessidade (log de 2026-09-25). */
+        const bool ls = power_mgmt_light_sleep_active();
         if (entering) {
-            usb_hid_keyboard_prepare_sleep();
+            if (ls) usb_hid_keyboard_prepare_sleep();
             return;
         }
-        storage_remount_sd();
-        usb_hid_keyboard_resume();
+        if (ls) {
+            storage_remount_sd();
+            usb_hid_keyboard_resume();
+        }
         slint::invoke_from_event_loop([]() {
             update_clock();
             char buf[96];
@@ -1216,6 +1390,18 @@ extern "C" void app_main(void)
     session_restore_if_needed();
     update_clock();
 
+    /* O event loop do Slint roda em task própria com pilha em PSRAM:
+     * o layout precisa de ~32 KiB de pilha e a RAM interna ficou curta
+     * depois que o ESP-Hosted passou a alocar buffers SDIO/DMA antes da
+     * task main (assert em app_startup.c:86 no boot de 2026-09-24). */
+    s_ui_run_handle = new slint::ComponentHandle<AppWindow>(ui);
+    BaseType_t ok = xTaskCreateWithCaps(ui_run_task, "ui_loop", 32768, NULL, 5,
+                                        NULL, MALLOC_CAP_SPIRAM);
+    if (ok != pdPASS) {
+        ESP_LOGW(TAG, "pilha PSRAM p/ UI falhou — fallback interno");
+        ok = xTaskCreate(ui_run_task, "ui_loop", 32768, NULL, 5, NULL);
+    }
+    ESP_ERROR_CHECK(ok == pdPASS ? ESP_OK : ESP_FAIL);
     ESP_LOGI(TAG, "bring-up completo, entrando no loop do Slint");
-    ui->run();
+    /* app_main retorna: a task main se encerra e libera os 16 KiB internos */
 }

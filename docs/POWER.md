@@ -26,6 +26,26 @@ Logo, deep sleep automático = aparelho "some" até tirar/recarregar a bateria.
 Inaceitável como comportamento silencioso. Light sleep, por outro lado, aceita
 wake por **qualquer** GPIO (gpio_wakeup) → botão e toque funcionam.
 
+## STANDBY: dois modos (`power.light_sleep`, default **false**)
+
+Medido em hardware (2026-09-24): no P4, **light sleep mata SDMMC, o SDIO do
+ESP-Hosted e o USB DWC2**. Pior: com o Wi-Fi ativo, o host SDMMC é
+*compartilhado* entre o cartão (slot 0) e o C6 (slot 1), então o
+unmount→mount do wake não re-inicializa o periférico
+("SDMMC host already initialized, skipping init flow") e o cartão volta
+morto (0x107). Re-inicializar hosted+SD+USB a cada wake é uma coreografia
+frágil demais para ser o default.
+
+- **`light_sleep = false` (default, robusto):** STANDBY = backlight 0 +
+  DISPOFF + CPU idle esperando semáforo; wake por ISR do botão BOOT, por
+  INT do touch (se pulsar) ou por qualquer atividade de UI/USB. Todos os
+  periféricos continuam vivos; economia vem da tela (o maior consumidor).
+- **`light_sleep = true` (experimental):** o fluxo antigo (light sleep +
+  remount SD + reinstall USB no wake), para medição de consumo. Checkbox
+  em Config, chave `power.light_sleep` no system.lua.
+- HIBERNATE continua sendo o modo de máxima economia (e o "desligar" do
+  PDA), alcançável também por `deep_sleep_after_s` a partir dos dois modos.
+
 ## Arquitetura em degraus (implementada em `power_mgmt.c`)
 
 ```

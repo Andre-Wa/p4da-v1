@@ -36,14 +36,24 @@ CONFIG_LCD_ENABLE_DEBUG_LOG=n
 
 # --- FreeRTOS / tarefas ---
 CONFIG_FREERTOS_HZ=1000
-# Event loop + layout do Slint nao cabem em 8K (Stack protection
-# fault em NotesListScreen::item_geometry com 8192).
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+# A task main só faz o bring-up: o event loop/layout do Slint mora na
+# task ui_loop (pilha 32K em PSRAM, ver main.cpp). 8K internos bastam e
+# aliviam o boot depois que o ESP-Hosted passou a alocar cedo.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=8192
 
 # --- Power management (standby/light sleep — ver docs/POWER.md) ---
 CONFIG_PM_ENABLE=y
 CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+
+# --- ESP-Hosted (C6/SDIO): alívio de RAM interna no boot ---
+# O hosted init roda como hook de startup, ANTES da task main; sem isso ele
+# esgota o heap interno e o assert de app_startup.c:86 derruba o boot
+# (observado em 2026-09-24). Pilhas das tasks do hosted -> PSRAM e filas
+# SDIO menores (cada slot = buffer DMA interno).
+CONFIG_ESP_HOSTED_DFLT_TASK_FROM_SPIRAM=y
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=10
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=10
 
 # --- SNTP (relógio via NTP no C6) ---
 CONFIG_LWIP_SNTP=y

@@ -28,5 +28,7 @@
  "chevron_right": "e5cc",
  "more_vert": "e5d4",
  "error": "e000",
- "insert_drive_file": "e24d"
+ "insert_drive_file": "e24d",
+ "lock": "e897",
+ "network_check": "e640"
 }
