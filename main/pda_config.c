@@ -13,17 +13,21 @@
 #include "storage_init.h"
 
 #include "esp_log.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "lua.h"
 #include "lauxlib.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <sys/stat.h>
 
 static const char *TAG = "pda_config";
 
 static pda_settings_t s_cfg;
 static bool s_dirty = false;
+static bool s_force_recreate = false;  /* delete+create p/ entradas viciadas */
 
 static void apply_defaults(pda_settings_t *s)
 {
@@ -170,6 +174,57 @@ done:
 }
 
 /* ------------------------------------------------------------------ */
+/* Apaga TODAS as entradas com este nome (o FAT pode acumular duplicatas
+ * viciadas; storage_delete_file remove só a primeira que ele resolve). */
+static void purge_path(const char *path)
+{
+    for (int i = 0; i < 8 && storage_file_exists(path); i++) {
+        storage_delete_file(path);
+    }
+}
+
+/* ---- sombra NVS: fonte de recuperação à prova de power-loss ---- */
+#define NVS_NS "pdacfg"
+static void nvs_shadow_save(const pda_settings_t *s)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_i32(h, "br", s->brightness);
+    nvs_set_i32(h, "dim", s->dim_after_s);
+    nvs_set_i32(h, "off", s->screen_off_after_s);
+    nvs_set_i32(h, "deep", s->deep_sleep_after_s);
+    nvs_set_u8(h, "wake", s->wake_on_touch ? 1 : 0);
+    nvs_set_u8(h, "osk", s->onscreen_keyboard_auto ? 1 : 0);
+    nvs_set_u8(h, "ls", s->light_sleep ? 1 : 0);
+    nvs_set_str(h, "tz", s->timezone);
+    nvs_set_str(h, "ntp", s->ntp_server);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static bool nvs_shadow_load(pda_settings_t *s)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
+    int32_t v;
+    uint8_t b;
+    size_t sz;
+    bool ok = true;
+    if (nvs_get_i32(h, "br", &v) == ESP_OK) s->brightness = v; else ok = false;
+    if (nvs_get_i32(h, "dim", &v) == ESP_OK) s->dim_after_s = v; else ok = false;
+    if (nvs_get_i32(h, "off", &v) == ESP_OK) s->screen_off_after_s = v; else ok = false;
+    if (nvs_get_i32(h, "deep", &v) == ESP_OK) s->deep_sleep_after_s = v; else ok = false;
+    if (nvs_get_u8(h, "wake", &b) == ESP_OK) s->wake_on_touch = b != 0;
+    if (nvs_get_u8(h, "osk", &b) == ESP_OK) s->onscreen_keyboard_auto = b != 0;
+    if (nvs_get_u8(h, "ls", &b) == ESP_OK) s->light_sleep = b != 0;
+    sz = sizeof(s->timezone);
+    nvs_get_str(h, "tz", s->timezone, &sz);
+    sz = sizeof(s->ntp_server);
+    nvs_get_str(h, "ntp", s->ntp_server, &sz);
+    nvs_close(h);
+    return ok;
+}
+
 static esp_err_t serialize_to(const char *path, const pda_settings_t *s)
 {
     char buf[1024];
@@ -205,12 +260,59 @@ static esp_err_t serialize_to(const char *path, const pda_settings_t *s)
     return storage_write_text_file(path, buf, (size_t)n);
 }
 
+/* Grava e RELÊ para confirmar persistência. Cartões com entrada de
+ * diretório/cluster cansada podem "aceitar" a escrita no cache e nunca
+ * atualizar o arquivo no meio físico — o boot seguinte relê o conteúdo
+ * velho (foi assim que os INT_MAX sobreviveram a várias curas). */
+static bool save_persists(const char *path)
+{
+    char *data = NULL;
+    size_t len = 0;
+    if (storage_read_file_alloc(path, &data, &len) != ESP_OK) return false;
+    lua_State *L = luaL_newstate();
+    if (!L) { free(data); return true; }
+    bool ok = true;
+    if (luaL_loadbuffer(L, data, len, "verify") == LUA_OK &&
+        lua_pcall(L, 0, 1, 0) == LUA_OK && lua_istable(L, -1)) {
+        lua_getfield(L, -1, "power");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "dim_after_s");
+            if (lua_isnumber(L, -1) && (int)lua_tointeger(L, -1) != s_cfg.dim_after_s) ok = false;
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    } else {
+        ok = false;
+    }
+    lua_close(L);
+    free(data);
+    return ok;
+}
+
 esp_err_t pda_config_save(void)
 {
     char path[160];
     if (pda_path(path, sizeof(path), "config/system.lua") != ESP_OK)
         return ESP_ERR_INVALID_SIZE;
+    if (s_force_recreate) {
+        /* PURGA de entradas duplicadas/viciadas no FAT (o open resolve a
+         * entrada ANTIGA; create anexa no fim e nunca é lida — mtime 1980
+         * no boot seguinte é a assinatura). Apaga até não existir mais. */
+        ESP_LOGW(TAG, "recriando system.lua (purga de entradas viciadas)");
+        purge_path(path);
+        purge_path("/internal/pda/config/system.lua");
+        purge_path("/sdcard/pda/config/system.lua");
+        s_force_recreate = false;
+    }
     esp_err_t err = serialize_to(path, &s_cfg);
+    if (err == ESP_OK && !save_persists(path)) {
+        ESP_LOGW(TAG, "escrita nao persistiu no cartao; recriando arquivo");
+        storage_delete_file(path);
+        err = serialize_to(path, &s_cfg);
+        if (err == ESP_OK && !save_persists(path)) {
+            ESP_LOGE(TAG, "SD nao persiste system.lua mesmo recriado (cartao/FAT?)");
+        }
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "falha ao salvar %s", path);
         return err;
@@ -219,6 +321,7 @@ esp_err_t pda_config_save(void)
     if (storage_sd_mounted()) {
         serialize_to("/internal/pda/config/system.lua", &s_cfg);
     }
+    nvs_shadow_save(&s_cfg);
     s_dirty = false;
     ESP_LOGI(TAG, "config salva em %s (br=%d dim=%d off=%d deep=%d)", path,
              s_cfg.brightness, s_cfg.dim_after_s, s_cfg.screen_off_after_s,
@@ -233,6 +336,9 @@ esp_err_t pda_config_init(void)
     char path[160];
     if (pda_path(path, sizeof(path), "config/system.lua") != ESP_OK)
         return ESP_ERR_INVALID_SIZE;
+    const char *alt = storage_sd_mounted()
+        ? "/internal/pda/config/system.lua"
+        : "/sdcard/pda/config/system.lua";
 
     if (!storage_file_exists(path)) {
         /* Antes de apelar p/ defaults: promove a cópia da OUTRA raiz
@@ -250,15 +356,29 @@ esp_err_t pda_config_init(void)
     }
     bool healed = false;
     esp_err_t err = parse_file(path, &s_cfg);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "mantendo defaults em memória (arquivo inválido)");
-        clamp_all(&s_cfg);
-        healed = true;
-    } else if (clamp_all(&s_cfg)) {
-        /* arquivo continha valores fora de faixa (ex.: INT_MAX do bug de
-         * NaN, ou leituras corrompidas do SD): saneia em memória e CURA o
-         * arquivo agora, para o lixo não se propagar em cada save. */
-        ESP_LOGW(TAG, "system.lua com valores fora de faixa — saneando e regravando");
+    bool bad = (err != ESP_OK) || clamp_all(&s_cfg);
+    if (bad) {
+        /* Cadeia de recuperação: espelho da outra raiz -> sombra NVS ->
+         * defaults. O FAT desta placa já apresentou entradas duplicadas
+         * viciadas (boot relê conteúdo antigo mesmo após save verificado);
+         * NVS (flash interna, power-loss safe) é a última rede. */
+        pda_settings_t mirror;
+        apply_defaults(&mirror);
+        if (parse_file(alt, &mirror) == ESP_OK && !clamp_all(&mirror)) {
+            ESP_LOGW(TAG, "system.lua da raiz ativa insano; recuperado do espelho %s", alt);
+            s_cfg = mirror;
+        } else {
+            pda_settings_t sh;
+            apply_defaults(&sh);
+            if (nvs_shadow_load(&sh) && !clamp_all(&sh)) {
+                ESP_LOGW(TAG, "system.lua insano nas duas raizes; recuperado da sombra NVS");
+                s_cfg = sh;
+            } else {
+                ESP_LOGW(TAG, "system.lua insano em tudo — defaults + regravação");
+                apply_defaults(&s_cfg);
+            }
+        }
+        s_force_recreate = true;   /* cura => purga + arquivo novo nas raízes */
         pda_config_save();
         healed = true;
     }
@@ -266,6 +386,13 @@ esp_err_t pda_config_init(void)
         if (!healed) {
             ESP_LOGI(TAG, "system.lua intacto — nenhuma regravação no boot");
         }
+    {
+        struct stat st;
+        if (stat(path, &st) == 0)
+            ESP_LOGI(TAG, "system.lua ativa: %ld B mtime=%ld", (long)st.st_size, (long)st.st_mtime);
+        if (stat(alt, &st) == 0)
+            ESP_LOGI(TAG, "system.lua espelho: %ld B mtime=%ld", (long)st.st_size, (long)st.st_mtime);
+    }
         ESP_LOGI(TAG, "config carregada: brilho=%d dim=%ds off=%ds deep=%ds",
                  s_cfg.brightness, s_cfg.dim_after_s,
                  s_cfg.screen_off_after_s, s_cfg.deep_sleep_after_s);
@@ -284,10 +411,29 @@ void pda_settings_update(const pda_settings_t *s)
 }
 
 
+esp_err_t pda_config_reload(void)
+{
+    char path[160];
+    if (pda_path(path, sizeof(path), "config/system.lua") != ESP_OK)
+        return ESP_ERR_INVALID_SIZE;
+    pda_settings_t tmp = s_cfg;
+    if (parse_file(path, &tmp) != ESP_OK) return ESP_FAIL;
+    bool healed = clamp_all(&tmp);
+    s_cfg = tmp;
+    if (healed) {
+        ESP_LOGW(TAG, "system.lua editado com valores fora de faixa — saneado e regravado");
+        pda_config_save();
+    } else {
+        ESP_LOGI(TAG, "system.lua recarregado pelo editor");
+    }
+    return ESP_OK;
+}
+
 void pda_config_reset_defaults(void)
 {
     apply_defaults(&s_cfg);
     s_dirty = true;
+    s_force_recreate = true;   /* "Padrão" + Salvar = arquivos recriados */
 }
 
 bool pda_settings_get(const char *key, double *out_num, bool *out_bool,

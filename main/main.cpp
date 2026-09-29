@@ -21,6 +21,7 @@
 #include "lua_runtime.h"
 #include "power_mgmt.h"
 #include "wifi_net.h"
+#include "nvs_flash.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -175,8 +176,12 @@ static void on_scan_done(const wifi_net_ap_t *aps, int count, void *ctx)
 
 static void net_start_scan(void)
 {
+    /* Longe da rede salva, o loop de reconexão a cada 2 s atrapalha o
+     * scan (rádio ocupado); pausa durante a varredura da tela Redes. */
+    wifi_net_set_autoreconnect(false);
     if (wifi_net_scan(on_scan_done, NULL) != ESP_OK) {
         log_line("[erro] scan não iniciado", NULL);
+        wifi_net_set_autoreconnect(true);
     }
 }
 
@@ -189,6 +194,8 @@ extern "C" void wifi_net_on_event_ui(bool connected, int rssi)
     std::string s(buf);
     slint::invoke_from_event_loop([s]() {
         g_ui->set_status_wifi(slint::SharedString(s));
+        g_ui->set_cfg_wifi_info(slint::SharedString(
+            wifi_net_connected() ? wifi_net_ssid() : "offline"));
     });
 }
 
@@ -250,12 +257,58 @@ static bool ed_osk_should_show(void)
     return pda_settings()->onscreen_keyboard_auto && !usb_hid_keyboard_connected();
 }
 
-/* linhas de exibição = linhas reais com "|" injetado na coluna do cursor.
- * O modelo Slint é PERSISTENTE e atualizado por linha (set_row_data):
- * trocar o modelo inteiro resetava o viewport-y do Flickable a cada
- * tecla (bug de scroll reportado 3x). */
-static std::shared_ptr<slint::VectorModel<slint::SharedString>> g_ed_model;
-static std::vector<std::string> g_ed_cache;
+/* ---- vista virtualizada do editor (M3c + fim dos resets de scroll) ----
+ * O C++ é dono da posição (s_ed_top/s_ed_left); a UI recebe só a fatia
+ * visível + offset pixel. Sem Flickable, sem binding bidirecional, sem
+ * reset de viewport a cada tecla. */
+static std::vector<std::string> g_ed_disp;   /* linhas de exibição completas */
+static float s_ed_top = 0.f;
+static float s_ed_left = 0.f;
+
+static int ed_area_h(void)
+{
+    return 480 - (int)ED_STATUS_H - ((int)ED_BTN_SM + 14) - 16 -
+           (ed_osk_should_show() ? (int)ED_OSK_H + 6 : 0);
+}
+
+static int ed_area_w(void) { return 800 - 2 * 9 - 2; }
+
+static void ed_refresh_view(void)
+{
+    float content_h = (float)g_ed_disp.size() * ED_LINE_H;
+    float maxtop = content_h - (float)ed_area_h();
+    if (maxtop < 0) maxtop = 0;
+    if (s_ed_top < 0) s_ed_top = 0;
+    if (s_ed_top > maxtop) s_ed_top = maxtop;
+
+    float maxleft = g_ui->get_ed_content_w() - (float)ed_area_w();
+    if (maxleft < 0) maxleft = 0;
+    if (s_ed_left < 0) s_ed_left = 0;
+    if (s_ed_left > maxleft) s_ed_left = maxleft;
+
+    int start = (int)(s_ed_top / ED_LINE_H);
+    int rows = ed_area_h() / (int)ED_LINE_H + 2;
+    auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
+    for (int i = start; i < (int)g_ed_disp.size() && i < start + rows; i++)
+        model->push_back(slint::SharedString(g_ed_disp[i]));
+    if (model->row_count() == 0)
+        model->push_back(slint::SharedString(""));
+    g_ui->set_ed_lines(model);
+    g_ui->set_ed_offset(s_ed_top - (float)start * ED_LINE_H);
+    g_ui->set_ed_offset_x(s_ed_left);
+}
+
+static void ed_ensure_cursor_visible(int cursor_line, int cursor_col)
+{
+    float cy = (float)cursor_line * ED_LINE_H;
+    if (cy < s_ed_top) s_ed_top = cy;
+    else if (cy + ED_LINE_H > s_ed_top + (float)ed_area_h())
+        s_ed_top = cy + ED_LINE_H - (float)ed_area_h();
+    float cx = (float)cursor_col * ED_CHAR_W + 6;
+    if (cx < s_ed_left) s_ed_left = cx;
+    else if (cx + ED_CHAR_W > s_ed_left + (float)ed_area_w())
+        s_ed_left = cx + ED_CHAR_W - (float)ed_area_w();
+}
 
 static void ed_push_ui(bool scroll_to_cursor)
 {
@@ -281,53 +334,31 @@ static void ed_push_ui(bool scroll_to_cursor)
     if ((size_t)cursor_col > disp[cursor_line].size())
         cursor_col = (int)disp[cursor_line].size();
     disp[cursor_line].insert(disp[cursor_line].begin() + cursor_col, '|');
+    g_ed_disp = disp;
 
     size_t maxw = 0;
     for (auto &d : disp) if (d.size() > maxw) maxw = d.size();
 
-    if (!g_ed_model) {
-        g_ed_model = std::make_shared<slint::VectorModel<slint::SharedString>>();
-        g_ui->set_ed_lines(g_ed_model);
-    }
-    if (g_ed_cache.size() != disp.size()) {
-        std::vector<slint::SharedString> vv;
-        vv.reserve(disp.size());
-        for (auto &d : disp) vv.push_back(slint::SharedString(d));
-        g_ed_model->set_vector(std::move(vv));
-    } else {
-        for (size_t i = 0; i < disp.size(); i++) {
-            if (g_ed_cache[i] != disp[i])
-                g_ed_model->set_row_data(i, slint::SharedString(disp[i]));
-        }
-    }
-    g_ed_cache = disp;
-
-    g_ui->set_ed_line_count((int)disp.size());
+    /* propriedades: só escreve quando mudam */
+    static float s_last_w = -1.f;
+    static std::string s_last_title;
+    static int s_last_flags = -1;
     float want_w = (float)(maxw * ED_CHAR_W + 60);
-    if (fabsf(want_w - g_ui->get_ed_content_w()) > 0.5f)
-        g_ui->set_ed_content_w(want_w);
-    g_ui->set_ed_title(slint::SharedString(ed_title()));
-    g_ui->set_ed_dirty(g_ed.dirty);
-    g_ui->set_ed_can_delete(g_ed.path.rfind(notes_dir() + "/", 0) == 0);
-    g_ui->set_ed_show_osk(ed_osk_should_show());
-
-    {
-        int content_h = (int)(disp.size() * ED_LINE_H) + 40;
-        int area_h = (int)(480 - ED_STATUS_H - (ED_BTN_SM + 14) - 16 -
-                     (ed_osk_should_show() ? ED_OSK_H + 6 : 0));
-        int maxy = content_h - area_h;
-        if (maxy < 0) maxy = 0;
-        int top = (int)g_ui->get_ed_scroll_y();
-        int target = top;
-        if (scroll_to_cursor) {
-            int cy = (int)(cursor_line * ED_LINE_H);
-            if (cy < top) target = cy;
-            else if (cy + (int)ED_LINE_H > top + area_h) target = cy + (int)ED_LINE_H - area_h;
-        }
-        if (target < 0) target = 0;
-        if (target > maxy) target = maxy;
-        if (target != top) g_ui->set_ed_scroll_y((float)target);
+    if (fabsf(want_w - s_last_w) > 0.5f) { g_ui->set_ed_content_w(want_w); s_last_w = want_w; }
+    std::string title = ed_title();
+    if (title != s_last_title) { g_ui->set_ed_title(slint::SharedString(title)); s_last_title = title; }
+    bool can_del = g_ed.path.rfind(notes_dir() + "/", 0) == 0;
+    bool osk = ed_osk_should_show();
+    int flags = (g_ed.dirty ? 1 : 0) | (can_del ? 2 : 0) | (osk ? 4 : 0);
+    if (flags != s_last_flags) {
+        g_ui->set_ed_dirty(g_ed.dirty);
+        g_ui->set_ed_can_delete(can_del);
+        g_ui->set_ed_show_osk(osk);
+        s_last_flags = flags;
     }
+
+    if (scroll_to_cursor) ed_ensure_cursor_visible(cursor_line, cursor_col);
+    ed_refresh_view();
 }
 
 static void ed_insert_str(const char *s, size_t n)
@@ -444,8 +475,9 @@ static void ed_load(const std::string &path, const std::string &content, bool is
     g_ed.dirty = false;
     g_ed.is_new = is_new;
     g_ed.osk_override = -1;
+    s_ed_top = 0.f;
+    s_ed_left = 0.f;
     ed_push_ui(false);
-    g_ui->set_ed_scroll_y(0.f);
     nav_goto(AppState::Editor);
     s_session_app = "noteedit";
     s_session_note = is_new ? std::string("") : ed_title();
@@ -477,6 +509,13 @@ static void ed_save(void)
     if (storage_write_text_file(g_ed.path.c_str(), g_ed.text.data(), g_ed.text.size()) == ESP_OK) {
         g_ed.dirty = false;
         g_ed.is_new = false;
+        /* Se o usuário editou o próprio system.lua, o buffer dele é a nova
+         * fonte da verdade: recarrega em memória (com sanitize) para o
+         * firmware não voltar a escrever valores velhos por cima
+         * (loop de "sobrescrita no boot" de 2026-09-27). */
+        if (g_ed.path.find("/config/system.lua") != std::string::npos) {
+            pda_config_reload();
+        }
         ESP_LOGI(TAG, "salvo: %s (%u bytes)", g_ed.path.c_str(), (unsigned)g_ed.text.size());
         ed_push_ui(false);
         if (g_ed.path.rfind(notes_dir() + "/", 0) == 0) refresh_notes_list();
@@ -592,6 +631,26 @@ static void list_dir_async(const std::string dir)
         auto isdir = std::make_shared<slint::VectorModel<bool>>();
         auto icons = std::make_shared<slint::VectorModel<slint::SharedString>>();
 
+        /* O VFS do IDF não enumera "/" (opendir falha): sintetiza a lista
+         * de mounts para a raiz virtual. */
+        if (dir == "/") {
+            if (storage_sd_mounted()) {
+                names->push_back(slint::SharedString("sdcard"));
+                isdir->push_back(true);
+                icons->push_back(slint::SharedString(icon_kind_for("sdcard", true)));
+            }
+            names->push_back(slint::SharedString("internal"));
+            isdir->push_back(true);
+            icons->push_back(slint::SharedString(icon_kind_for("internal", true)));
+            slint::invoke_from_event_loop([names, isdir, icons, dir]() {
+                g_ui->set_file_entries(names);
+                g_ui->set_file_is_dir(isdir);
+                g_ui->set_file_kind(icons);
+                g_ui->set_file_path(slint::SharedString(dir));
+            });
+            return;
+        }
+
         DIR *d = opendir(dir.c_str());
         if (d) {
             std::vector<std::string> dirs, files;
@@ -693,6 +752,13 @@ static void push_fm_ui(void)
     g_ui->set_fm_prompt_needs_text(g_fm.prompt_needs_text);
 }
 
+/* Join de caminho que respeita a raiz "/" (evita "//sdcard"). */
+static std::string path_join(const std::string &dir, const std::string &name)
+{
+    if (dir == "/") return "/" + name;
+    return dir + "/" + name;
+}
+
 static std::string base_name(const std::string &p)
 {
     size_t i = p.find_last_of('/');
@@ -702,7 +768,7 @@ static std::string base_name(const std::string &p)
 static void fm_open_entry(const std::string name)
 {
     if (name == "(vazio)" || name == "(não montado)") return;
-    std::string full = g_fm_dir + "/" + name;
+    std::string full = path_join(g_fm_dir, name);
     if (g_fm.picker) {
         if (storage_is_dir(full.c_str())) {
             fm_enter_dir(full);
@@ -894,6 +960,8 @@ static void push_settings_to_ui(void)
     g_ui->set_status_store(slint::SharedString(buf));
     g_ui->set_status_store_icon(slint::SharedString(storage_sd_mounted() ? "sd" : "int"));
     g_ui->set_cfg_batt_info(slint::SharedString("nao medivel (IP5306)"));
+    g_ui->set_cfg_wifi_info(slint::SharedString(
+        wifi_net_connected() ? wifi_net_ssid() : "offline"));
     g_ui->set_status_batt(slint::SharedString("--"));
 }
 
@@ -912,6 +980,14 @@ static void ui_run_task(void *arg)
 extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "=== PDA M2 — bring-up ===");
+
+    /* NVS antes de tudo: a sombra de config (pda_config) precisa dele já
+     * no boot-heal, antes da task de Wi-Fi subir. */
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
 
     board_storage_init();
     pda_config_init();
@@ -993,26 +1069,25 @@ extern "C" void app_main(void)
     });
     ui->on_dir_up([]() {
         activity();
+        ESP_LOGI(TAG, "fm: Sobe (prompt=%d sheet=%d picker=%d dir=%s)",
+                 (int)g_fm.prompt, (int)g_fm.sheet, (int)g_fm.picker, g_fm_dir.c_str());
         if (g_fm.prompt || g_fm.sheet) {
             g_fm.prompt = g_fm.sheet = false;
             push_fm_ui();
             return;
         }
-        /* picker: Sobe navega normalmente (precisa conseguir sair de
-         * subdiretórios para escolher destino!) */
+        /* Sobe até "/" (onde o VFS lista os mounts /sdcard e /internal).
+         * Sem clamp em pda_root: era isso que prendia o usuário em
+         * /sdcard/pda (reporte 2026-09-28; o replace anterior não casou). */
         std::string d = g_fm_dir;
+        if (d == "/") return;
         size_t slash = d.find_last_of('/');
-        if (slash != std::string::npos && slash > 0) {
-            std::string parent = d.substr(0, slash);
-            if (parent.empty()) parent = "/";
-            if (parent == "/sdcard" || parent == "/internal" || parent == "/") {
-                g_fm_dir = pda_root();
-            } else {
-                g_fm_dir = parent;
-            }
-        } else {
-            g_fm_dir = pda_root();
-        }
+        std::string parent = (slash == std::string::npos || slash == 0)
+                                 ? std::string("/")
+                                 : d.substr(0, slash);
+        g_fm_dir = parent;
+        g_dir_hist.push_back(d);
+        ESP_LOGI(TAG, "fm: subindo p/ %s", g_fm_dir.c_str());
         list_dir_async(g_fm_dir);
     });
 
@@ -1048,7 +1123,7 @@ extern "C" void app_main(void)
             g_fm.sheet = false;
             g_fm.picker = true;
             g_fm.picker_op = (act == "copiar") ? "copy" : "move";
-            g_fm.picker_src = g_fm_dir + "/" + g_fm.sheet_name;
+            g_fm.picker_src = path_join(g_fm_dir, g_fm.sheet_name);
             g_fm.picker_label = (act == "copiar" ? "Copiar \"" : "Mover \"")
                               + g_fm.sheet_name + "\" para:";
             push_fm_ui();
@@ -1085,7 +1160,7 @@ extern "C" void app_main(void)
     ui->on_fm_picker_select([]() {
         activity();
         if (!g_fm.picker) return;
-        std::string dest = g_fm_dir + "/" + base_name(g_fm.picker_src);
+        std::string dest = path_join(g_fm_dir, base_name(g_fm.picker_src));
         char msg[320];
         esp_err_t err = (g_fm.picker_op == "copy")
             ? storage_copy_file(g_fm.picker_src.c_str(), dest.c_str())
@@ -1105,14 +1180,14 @@ extern "C" void app_main(void)
     ui->on_fm_prompt_ok([]() {
         activity();
         if (!g_fm.prompt) return;
-        std::string target = g_fm_dir + "/" + g_fm.sheet_name;
+        std::string target = path_join(g_fm_dir, g_fm.sheet_name);
         char msg[320];
         if (g_fm.prompt_action == "rename") {
             std::string nt = g_fm.prompt_text;
             if (nt.empty() || nt == "." || nt == ".." || nt.find('/') != std::string::npos) {
                 log_line("[erro] nome inválido", NULL);
             } else {
-                std::string dest = g_fm_dir + "/" + nt;
+                std::string dest = path_join(g_fm_dir, nt);
                 esp_err_t err = storage_move_file(target.c_str(), dest.c_str());
                 snprintf(msg, sizeof(msg), err == ESP_OK ? "[ok] renomeado p/ %s" : "[erro] renomear (%s)",
                          err == ESP_OK ? nt.c_str() : esp_err_to_name(err));
@@ -1123,17 +1198,34 @@ extern "C" void app_main(void)
             if (nt.empty() || nt.find('/') != std::string::npos) {
                 log_line("[erro] nome inválido", NULL);
             } else {
-                storage_ensure_dir((g_fm_dir + "/" + nt).c_str());
+                storage_ensure_dir((path_join(g_fm_dir, nt)).c_str());
                 log_line("[ok] diretório criado", NULL);
             }
+        } else if (g_fm.prompt_action == "overwrite") {
+            /* segundo passo: confirmação de substituição */
+            std::string path = path_join(g_fm_dir, g_fm.prompt_text);
+            if (storage_write_text_file(path.c_str(), "", 0) == ESP_OK) {
+                log_line("[ok] arquivo substituído", NULL);
+                g_fm.prompt = false;
+                push_fm_ui();
+                ed_open_path_async(path);
+                return;
+            }
+            log_line("[erro] falha ao substituir", NULL);
         } else if (g_fm.prompt_action == "newfile") {
             std::string nt = g_fm.prompt_text;
             if (nt.empty() || nt.find('/') != std::string::npos) {
                 log_line("[erro] nome inválido", NULL);
             } else {
-                std::string path = g_fm_dir + "/" + nt;
+                std::string path = path_join(g_fm_dir, nt);
                 if (storage_file_exists(path.c_str())) {
-                    log_line("[erro] arquivo já existe", NULL);
+                    /* confirma antes de sobrescrever */
+                    g_fm.prompt_title = "Já existe \"" + nt + "\". Substituir?";
+                    g_fm.prompt_text = nt;
+                    g_fm.prompt_needs_text = false;
+                    g_fm.prompt_action = "overwrite";
+                    push_fm_ui();
+                    return;
                 } else if (storage_write_text_file(path.c_str(), "", 0) == ESP_OK) {
                     log_line("[ok] arquivo criado", NULL);
                     g_fm.prompt = false;
@@ -1168,6 +1260,7 @@ extern "C" void app_main(void)
     });
     ui->on_net_pick([](int i) {
         activity();
+        wifi_net_set_autoreconnect(true);
         if (i < 0 || (size_t)i >= g_aps.size()) return;
         const wifi_net_ap_t &ap = g_aps[i];
         if (ap.open) {
@@ -1187,6 +1280,10 @@ extern "C" void app_main(void)
     });
     ui->on_app_back([]() {
         activity();
+        /* saindo da tela Redes sem escolher: retoma reconexão da rede salva */
+        if (g_ui->get_active_app() == AppState::Networks) {
+            wifi_net_set_autoreconnect(true);
+        }
         nav_back();
     });
     ui->on_fm_back([]() {
@@ -1219,20 +1316,34 @@ extern "C" void app_main(void)
     });
 
     /* ---------- editor ---------- */
-    ui->on_ed_line_tapped([](int line) {
+    ui->on_ed_drag([](float dx, float dy) {
         activity();
-        /* cursor no FIM da linha tocada (coluna via setas/OSK) */
+        s_ed_left -= dx;
+        s_ed_top -= dy;
+        ed_refresh_view();
+    });
+    ui->on_ed_tap_at([](float x, float y) {
+        activity();
+        /* fonte mono: linha e coluna direto do ponto tocado */
+        int line = (int)((s_ed_top + y) / ED_LINE_H);
+        int col = (int)((s_ed_left + x - 6) / ED_CHAR_W);
+        if (line < 0) line = 0;
+        if (col < 0) col = 0;
         size_t line_start = 0;
         int idx = 0;
         for (size_t i = 0; i <= g_ed.text.size(); i++) {
             if (i == g_ed.text.size() || g_ed.text[i] == '\n') {
-                if (idx == line) { g_ed.cursor = i; break; }
+                if (idx == line) {
+                    size_t len = i - line_start;
+                    size_t c = (size_t)col > len ? len : (size_t)col;
+                    g_ed.cursor = utf8_snap(g_ed.text, line_start + c);
+                    break;
+                }
                 idx++;
                 line_start = i + 1;
-                (void)line_start;
             }
         }
-        ed_push_ui(true);
+        ed_push_ui(false);
     });
     ui->on_ed_osk_key([](slint::SharedString k) {
         activity();
@@ -1316,6 +1427,11 @@ extern "C" void app_main(void)
     ui->on_cfg_sleep_now([]() {
         activity();
         power_mgmt_request_standby();
+    });
+    ui->on_cfg_open_networks([]() {
+        activity();
+        nav_goto(AppState::Networks);
+        net_start_scan();
     });
     ui->on_cfg_hibernate([]() {
         power_mgmt_hibernate();

@@ -7,6 +7,7 @@
 import { Theme } from "theme.slint";
 import { Divider } from "elements/surfaces.slint";
 import { IconForKind } from "elements/icons.slint";
+import { PromptOverlay } from "elements/prompt.slint";
 import { LauncherScreen } from "screens/launcher.slint";
 import { FileManagerScreen } from "screens/files.slint";
 import { NotesListScreen } from "screens/notes.slint";
@@ -74,7 +75,8 @@ export component AppWindow inherits Window {
     // ---- editor ----
     in property <string> ed-title: "";
     in property <[string]> ed-lines;
-    in property <int> ed-line-count: 0;
+    in property <length> ed-offset: 0px;
+    in property <length> ed-offset-x: 0px;
     in property <length> ed-content-w: 780px;
     in property <bool> ed-dirty: false;
     in property <bool> ed-can-delete: false;
@@ -84,10 +86,9 @@ export component AppWindow inherits Window {
     in property <[string]> ed-osk-r1;
     in property <[string]> ed-osk-r2;
     in property <[string]> ed-osk-r3;
-    in-out property <length> ed-scroll-y: 0px;
-    in-out property <length> ed-scroll-x: 0px;
     in property <bool> has-keyboard: false;
-    callback ed-line-tapped(int);
+    callback ed-drag(float, float);
+    callback ed-tap-at(float, float);
     callback ed-osk-key(string);
     callback ed-osk-shift-set(bool);
     callback ed-toggle-osk();
@@ -119,6 +120,8 @@ export component AppWindow inherits Window {
     in-out property <bool> cfg-light-sleep: false;
     in property <string> cfg-store-info: "";
     in property <string> cfg-batt-info: "";
+    in property <string> cfg-wifi-info: "";
+    callback cfg-open-networks();
     callback cfg-save();
     callback cfg-reset();
     callback cfg-sleep-now();
@@ -139,6 +142,10 @@ export component AppWindow inherits Window {
         running: true;
         triggered => { root.tick(); }
     }
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
 
     VerticalLayout {
         padding: 0px;
@@ -186,15 +193,6 @@ export component AppWindow inherits Window {
                 sheet-is-dir: root.fm-sheet-isdir;
                 picker-mode: root.fm-picker;
                 picker-label: root.fm-picker-label;
-                prompt-visible: root.fm-prompt;
-                prompt-title: root.fm-prompt-title;
-                prompt-text: root.fm-prompt-text;
-                prompt-needs-text: root.fm-prompt-needs-text;
-                osk-shift: root.ed-osk-shift;
-                osk-mode: root.ed-osk-mode;
-                osk-r1: root.ed-osk-r1;
-                osk-r2: root.ed-osk-r2;
-                osk-r3: root.ed-osk-r3;
                 request-dir(p) => { root.request-dir(p); }
                 open-entry(e) => { root.request-dir(e); }
                 go-up => { root.dir-up(); }
@@ -205,10 +203,6 @@ export component AppWindow inherits Window {
                 new-dir => { root.fm-newdir(); }
                 new-file => { root.fm-newfile(); }
                 picker-select => { root.fm-picker-select(); }
-                prompt-ok => { root.fm-prompt-ok(); }
-                prompt-cancel => { root.fm-prompt-cancel(); }
-                osk-key(k) => { root.ed-osk-key(k); }
-                osk-shift-changed(s2) => { root.ed-osk-shift-set(s2); }
             }
             if (root.active-app == AppState.NotesList) : NotesListScreen {
                 width: 100%;
@@ -223,7 +217,8 @@ export component AppWindow inherits Window {
                 height: 100%;
                 title: root.ed-title;
                 lines: root.ed-lines;
-                line-count: root.ed-line-count;
+                offset: root.ed-offset;
+                offset-x: root.ed-offset-x;
                 content-w: root.ed-content-w;
                 dirty: root.ed-dirty;
                 can-delete: root.ed-can-delete;
@@ -233,9 +228,8 @@ export component AppWindow inherits Window {
                 osk-r1: root.ed-osk-r1;
                 osk-r2: root.ed-osk-r2;
                 osk-r3: root.ed-osk-r3;
-                scroll-y <=> root.ed-scroll-y;
-                scroll-x <=> root.ed-scroll-x;
-                line-tapped(i) => { root.ed-line-tapped(i); }
+                drag(dx, dy) => { root.ed-drag(dx, dy); }
+                tap-at(x, y) => { root.ed-tap-at(x, y); }
                 osk-key(k) => { root.ed-osk-key(k); }
                 osk-shift-changed(s) => { root.ed-osk-shift-set(s); }
                 save => { root.ed-save(); }
@@ -276,6 +270,8 @@ export component AppWindow inherits Window {
                 light-sleep <=> root.cfg-light-sleep;
                 store-info: root.cfg-store-info;
                 battery-info: root.cfg-batt-info;
+                wifi-info: root.cfg-wifi-info;
+                open-networks => { root.cfg-open-networks(); }
                 save => { root.cfg-save(); }
                 reset => { root.cfg-reset(); }
                 sleep-now => { root.cfg-sleep-now(); }
@@ -283,6 +279,23 @@ export component AppWindow inherits Window {
                 go-back => { root.app-back(); }
             }
         }
+    }
+
+    // ---- prompt global (senha Wi-Fi, rename, novo dir/arq, confirmações) ----
+    if root.fm-prompt: PromptOverlay {
+        title: root.fm-prompt-title;
+        text: root.fm-prompt-text;
+        needs-text: root.fm-prompt-needs-text;
+        osk-shift: root.ed-osk-shift;
+        osk-mode: root.ed-osk-mode;
+        osk-r1: root.ed-osk-r1;
+        osk-r2: root.ed-osk-r2;
+        osk-r3: root.ed-osk-r3;
+        ok => { root.fm-prompt-ok(); }
+        cancel => { root.fm-prompt-cancel(); }
+        osk-key(k) => { root.ed-osk-key(k); }
+        osk-shift-changed(s2) => { root.ed-osk-shift-set(s2); }
+    }
     }
 
     callback open-app-dispatch(string);

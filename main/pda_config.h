@@ -51,6 +51,9 @@ bool pda_config_dirty(void);
 /** Reescreve system.lua na raiz ativa e (melhor esforço) na outra raiz. */
 esp_err_t pda_config_save(void);
 
+/** Relê o system.lua da raiz ativa para a memória (com sanitize). */
+esp_err_t pda_config_reload(void);
+
 /** Restaura defaults em memória (não salva). */
 void pda_config_reset_defaults(void);
 

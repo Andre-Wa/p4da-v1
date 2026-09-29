@@ -74,6 +74,17 @@ Nada de M(n+1) começa com pendência de M(n).
 - [x] docs/WIFI.md: procedimento do C6, limitação standby×SDIO, segurança
 - [ ] M4b: tela de redes/scan + Bluetooth
 
+## M4.5 — Revamp de UI (FEITO, validação pendente)
+- [x] Config em **abas com sidebar de ícones** (Tela/Sistema/Entrada/Redes/Sobre)
+      — resolve o overflow que escondia o 3o checkbox
+- [x] **Switches** no lugar de CheckBoxes; readouts dos sliders com
+      `Math.round` (sem casas decimais)
+- [x] Launcher em **grade 3x3 de tiles** com ícone + legenda
+- [x] Editor com **fonte monoespaçada** (Roboto Mono subset, Apache-2.0)
+- [x] Aba Redes com status + atalho p/ tela de redes; aba Sobre com versões
+- [ ] Wishlist remanescente: cursor piscante, leitor markdown, notas
+      ler-vs-editar (=> M6)
+
 ## M4 — Conectividade (Wi-Fi/BT via C6)
 - Reflash do C6 (ESP-Hosted slave 2.12.x) — `tools/flash_c6_wifi.sh`
 - `espressif/esp_hosted` no P4; STA + DHCP; NTP → relógio real na status bar
@@ -138,3 +149,15 @@ Nada de M(n+1) começa com pendência de M(n).
   (`sleep: Incorrect wakeup source (7)/(4)`).
 - Para reabilitar: rework de re-init coordenado hosted+SDMMC+USB no wake,
   ou aceitar tear-down completo do hosted antes do sleep e re-init depois.
+
+## Backlog M4d / M-usb (pedidos de 2026-09-27)
+- **Wi-Fi multi-redes**: perfil de redes em `config/wifi.lua` (lista com
+  prioridade) + segredo não em texto puro (NVS com criptografia ou chave
+  derivada); UI de gerenciamento (esquecer/reordenar).
+- **Descoberta de redes fora de casa**: investigar scan com auto-reconnect
+  pausado (feito o primeiro passo em M4.5), canais 2.4/5, APs escondidos,
+  e comportamento do C6 em hotspot de telefone.
+- **Armazenamento visível no PC (estilo MTP)**: USB MSC/ou MTP próprio no
+  porto OTG, ativado EXPLICITAMENTE em Config (conflita com o modo host do
+  teclado — exige troca de papel USB dinamicamente). Não trivial; entra
+  como milestone próprio depois do M5.

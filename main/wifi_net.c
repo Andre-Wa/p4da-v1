@@ -175,7 +175,7 @@ static void wifi_task(void *arg)
     memset(&cfg, 0, sizeof(cfg));
     copy_wifi_str((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), s_ssid);
     copy_wifi_str((char *)cfg.sta.password, sizeof(cfg.sta.password), s_pass);
-    cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(WIFI_IF_STA, &cfg);
     if (esp_wifi_start() != ESP_OK) {
@@ -207,6 +207,8 @@ static void scan_task(void *arg)
     wifi_scan_config_t sc = { 0 };
     sc.scan_time.active.min = 100;
     sc.scan_time.active.max = 300;
+    sc.scan_time.passive = 300;
+    sc.show_hidden = true;
     wifi_net_ap_t *out = NULL;
     int n = 0;
     if (esp_wifi_scan_start(&sc, true) == ESP_OK) {
@@ -289,7 +291,9 @@ esp_err_t wifi_net_connect(const char *ssid, const char *pass, bool save)
     memset(&cfg, 0, sizeof(cfg));
     copy_wifi_str((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), ssid);
     copy_wifi_str((char *)cfg.sta.password, sizeof(cfg.sta.password), pass);
-    cfg.sta.threshold.authmode = pass[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;  /* aceita WPA2/WPA3 do AP */
+    cfg.sta.pmf_cfg.capable = true;   /* hotspots WPA3/PMF (ex.: alguns Android) */
+    cfg.sta.pmf_cfg.required = false;
     esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
     if (err != ESP_OK) return err;
     esp_wifi_disconnect();
@@ -297,6 +301,15 @@ esp_err_t wifi_net_connect(const char *ssid, const char *pass, bool save)
 }
 
 bool wifi_net_connected(void) { return s_connected; }
+
+void wifi_net_set_autoreconnect(bool on)
+{
+    /* Só a nossa flag: o loop de reconexão é nosso (handler de
+     * DISCONNECTED checa s_auto). esp_wifi_set_autoreconnect não faz parte
+     * do subset proxied pelo esp_wifi_remote no IDF 5.5. */
+    s_auto = on;
+    ESP_LOGI(TAG, "auto-reconnect: %s", on ? "on" : "off");
+}
 bool wifi_net_clock_synced(void) { return s_synced; }
 
 int wifi_net_rssi(void)

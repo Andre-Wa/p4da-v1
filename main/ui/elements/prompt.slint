@@ -1,0 +1,92 @@
+// elements/prompt.slint — overlay global de prompt/confirmacao + OSK
+// (M4.5: antes vivia dentro de files.slint e por isso nao aparecia na
+//  tela de Redes — o prompt de senha "sumia" e reaparecia em Arquivos.)
+import { Theme } from "../theme.slint";
+import { FilledButton, GhostButton } from "../elements/buttons.slint";
+import { OnScreenKeyboard } from "../elements/osk.slint";
+
+export component PromptOverlay inherits Rectangle {
+    in property <string> title;
+    in property <string> text;
+    in property <bool> needs-text;
+    in property <bool> osk-shift;
+    in property <bool> osk-mode;
+    in property <[string]> osk-r1;
+    in property <[string]> osk-r2;
+    in property <[string]> osk-r3;
+    callback ok();
+    callback cancel();
+    callback osk-key(string);
+    callback osk-shift-changed(bool);
+
+    width: 100%;
+    height: 100%;
+    background: #99000000;
+
+    /* Bloqueador modal: consome toques fora do painel (sem ele o toque
+     * ATRAVESSA para a tela de baixo — reporte 2026-09-28). Cancelar só
+     * pelo botão Cancelar. */
+    TouchArea {
+        width: 100%;
+        height: 100%;
+    }
+
+    Rectangle {
+        x: Theme.sp-lg;
+        y: root.needs-text ? 40px : (parent.height - 150px) / 2;
+        width: parent.width - Theme.sp-lg * 2;
+        height: root.needs-text ? 120px : 150px;
+        background: Theme.surface-2;
+        border-radius: Theme.shape-lg;
+        border-width: 1px;
+        border-color: Theme.outline;
+
+        VerticalLayout {
+            padding: Theme.sp-md;
+            spacing: Theme.sp-sm;
+            Text {
+                text: root.title;
+                font-size: Theme.type-body;
+                color: Theme.on-surface;
+                wrap: word-wrap;
+            }
+            if root.needs-text: Rectangle {
+                height: 44px;
+                background: Theme.surface-1;
+                border-radius: Theme.shape-sm;
+                border-width: 1px;
+                border-color: Theme.primary;
+                Text {
+                    x: Theme.sp-sm;
+                    width: parent.width - Theme.sp-sm * 2;
+                    height: 100%;
+                    font-family: "Roboto Mono";
+                    text: root.text + "|";
+                    font-size: Theme.type-body;
+                    color: Theme.on-surface;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.sp-sm;
+                FilledButton { text: "OK"; clicked => { root.ok(); } }
+                GhostButton { text: "Cancelar"; clicked => { root.cancel(); } }
+            }
+        }
+    }
+
+    if root.needs-text: OnScreenKeyboard {
+        y: parent.height - Theme.osk-h - 4px;
+        width: 100%;
+        height: Theme.osk-h;
+        r1: root.osk-r1;
+        r2: root.osk-r2;
+        r3: root.osk-r3;
+        shift: root.osk-shift;
+        mode: root.osk-mode;
+        allow-hide: false;
+        key(k) => { root.osk-key(k); }
+        shift-changed(s) => { root.osk-shift-changed(s); }
+    }
+}

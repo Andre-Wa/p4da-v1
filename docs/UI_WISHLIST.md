@@ -17,3 +17,11 @@ Backlog de refinamento de interface — sem pressa, entra entre milestones.
 - [ ] Trocar CheckBox por Switch na tela de Config.
 - [ ] Notas: leitor markdown (render) separado do modo edição
       ("ler" vs "editar").
+
+## Acrescentado em 2026-09-28
+- [ ] Gestos de navegação (swipe entre telas/voltar, swipe na status bar).
+- [ ] Menu de configurações rápidas pulldown na barra de status
+      (brilho, Wi-Fi, standby, brilho-noturno...).
+- [ ] OSK: teclas maiores/mais espaçadas (alvo de toque ainda pequeno em
+      algumas fileiras); considerar fileira de números fixa.
+- [ ] M3 Expressive mais fiel (formas maiores, cor dinâmica, transições).

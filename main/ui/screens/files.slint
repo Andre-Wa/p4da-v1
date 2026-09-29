@@ -11,7 +11,6 @@ import { Theme } from "../theme.slint";
 import { TonalButton, GhostButton, DangerButton, FilledButton } from "../elements/buttons.slint";
 import { Surface, ScreenTitle } from "../elements/surfaces.slint";
 import { IconForKind, IconMore, IconNewFolder } from "../elements/icons.slint";
-import { OnScreenKeyboard } from "../elements/osk.slint";
 
 export component FileManagerScreen inherits Rectangle {
     in property <[string]> entries;
@@ -28,16 +27,6 @@ export component FileManagerScreen inherits Rectangle {
     in property <bool> picker-mode;
     in property <string> picker-label;
 
-    // prompt (rename / novo dir / confirmação)
-    in property <bool> prompt-visible;
-    in property <string> prompt-title;
-    in property <string> prompt-text;
-    in property <bool> prompt-needs-text;
-    in property <bool> osk-shift;
-    in property <bool> osk-mode;
-    in property <[string]> osk-r1;
-    in property <[string]> osk-r2;
-    in property <[string]> osk-r3;
 
     callback open-entry(string);
     callback request-dir(string);
@@ -49,10 +38,6 @@ export component FileManagerScreen inherits Rectangle {
     callback new-dir();
     callback new-file();
     callback picker-select();
-    callback prompt-ok();
-    callback prompt-cancel();
-    callback osk-key(string);
-    callback osk-shift-changed(bool);
 
     Rectangle {
         width: 100%;
@@ -192,71 +177,5 @@ export component FileManagerScreen inherits Rectangle {
             }
         }
 
-        // ---- prompt (texto ou confirmação) + OSK ----
-        if root.prompt-visible: Rectangle {
-            width: 100%;
-            height: 100%;
-            background: #99000000;
-            TouchArea {
-                width: 100%;
-                height: 100%;
-                clicked => { root.prompt-cancel(); }
-            }
-            Rectangle {
-                x: Theme.sp-lg;
-                y: root.prompt-needs-text ? 40px : (parent.height - 150px) / 2;
-                width: parent.width - Theme.sp-lg * 2;
-                height: root.prompt-needs-text ? 120px : 150px;
-                background: Theme.surface-2;
-                border-radius: Theme.shape-lg;
-                border-width: 1px;
-                border-color: Theme.outline;
-
-                VerticalLayout {
-                    padding: Theme.sp-md;
-                    spacing: Theme.sp-sm;
-                    Text {
-                        text: root.prompt-title;
-                        font-size: Theme.type-body;
-                        color: Theme.on-surface;
-                        wrap: word-wrap;
-                    }
-                    if root.prompt-needs-text: Rectangle {
-                        height: 44px;
-                        background: Theme.surface-1;
-                        border-radius: Theme.shape-sm;
-                        border-width: 1px;
-                        border-color: Theme.primary;
-                        Text {
-                            x: Theme.sp-sm;
-                            width: parent.width - Theme.sp-sm * 2;
-                            height: 100%;
-                            text: root.prompt-text + "|";
-                            font-size: Theme.type-body;
-                            color: Theme.on-surface;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.sp-sm;
-                        FilledButton { text: "OK"; clicked => { root.prompt-ok(); } }
-                        GhostButton { text: "Cancelar"; clicked => { root.prompt-cancel(); } }
-                    }
-                }
-            }
-            if root.prompt-needs-text: OnScreenKeyboard {
-                y: parent.height - Theme.osk-h - 4px;
-                width: 100%;
-                height: Theme.osk-h;
-                r1: root.osk-r1;
-                r2: root.osk-r2;
-                r3: root.osk-r3;
-                shift: root.osk-shift;
-                mode: root.osk-mode;
-                key(k) => { root.osk-key(k); }
-                shift-changed(s) => { root.osk-shift-changed(s); }
-            }
-        }
     }
 }

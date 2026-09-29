@@ -1,6 +1,50 @@
-// screens/launcher.slint — menu principal (tiles M3 expressive adaptados)
+// screens/launcher.slint — grade 3x3 de tiles com ícone + legenda (M4.5)
 import { Theme } from "../theme.slint";
-import { TonalButton } from "../elements/buttons.slint";
+import { Surface } from "../elements/surfaces.slint";
+import { IconFileText, IconFolder, IconTerminal, IconSettings, IconWifi,
+         IconMusic, IconEvent, IconPerson, IconClock } from "../elements/icons.slint";
+
+component Tile inherits Surface {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback clicked;
+    level: 2;
+    border-radius: Theme.shape-lg;
+    clip: true;
+
+    VerticalLayout {
+        padding: Theme.sp-sm;
+        spacing: Theme.sp-xs;
+        alignment: center;
+        Text {
+            text: root.icon;
+            font-family: "Material Icons";
+            font-size: 34px;
+            color: root.enabled ? Theme.primary : Theme.on-surface-var;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.label;
+            font-size: Theme.type-label;
+            color: root.enabled ? Theme.on-surface : Theme.on-surface-var;
+            horizontal-alignment: center;
+        }
+    }
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.state-pressed;
+        opacity: 10%;
+        visible: ta.pressed && root.enabled;
+    }
+    ta := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
 
 export component LauncherScreen inherits Rectangle {
     callback open-app(string);
@@ -20,22 +64,24 @@ export component LauncherScreen inherits Rectangle {
         GridLayout {
             spacing: Theme.sp-md;
             Row {
-                TonalButton { height: 64px; fsize: Theme.type-title; text: "Notas"; clicked => { root.open-app("Notas"); } }
-                TonalButton { height: 64px; fsize: Theme.type-title; text: "Arquivos"; clicked => { root.open-app("Arquivos"); } }
-                TonalButton { height: 64px; fsize: Theme.type-title; text: "Scripts"; clicked => { root.open-app("Scripts"); } }
-                TonalButton { height: 64px; fsize: Theme.type-title; text: "Config"; clicked => { root.open-app("Config"); } }
-                TonalButton { height: 64px; fsize: Theme.type-title; text: "Redes"; clicked => { root.open-app("Redes"); } }
+                Tile { icon: ""; label: "Notas"; clicked => { root.open-app("Notas"); } }
+                Tile { icon: ""; label: "Arquivos"; clicked => { root.open-app("Arquivos"); } }
+                Tile { icon: ""; label: "Scripts"; clicked => { root.open-app("Scripts"); } }
             }
             Row {
-                TonalButton { height: 64px; fsize: Theme.type-title; enabled: false; text: "Música"; clicked => { root.open-app("Musica"); } }
-                TonalButton { height: 64px; fsize: Theme.type-title; enabled: false; text: "Agenda"; clicked => { root.open-app("Agenda"); } }
-                TonalButton { height: 64px; fsize: Theme.type-title; enabled: false; text: "Contatos"; clicked => { root.open-app("Contatos"); } }
-                TonalButton { height: 64px; fsize: Theme.type-title; enabled: false; text: "Relógio"; clicked => { root.open-app("Relogio"); } }
+                Tile { icon: ""; label: "Redes"; clicked => { root.open-app("Redes"); } }
+                Tile { icon: ""; label: "Config"; clicked => { root.open-app("Config"); } }
+                Tile { icon: ""; label: "Música"; enabled: false; clicked => { root.open-app("Musica"); } }
+            }
+            Row {
+                Tile { icon: ""; label: "Agenda"; enabled: false; clicked => { root.open-app("Agenda"); } }
+                Tile { icon: ""; label: "Contatos"; enabled: false; clicked => { root.open-app("Contatos"); } }
+                Tile { icon: ""; label: "Relógio"; enabled: false; clicked => { root.open-app("Relogio"); } }
             }
         }
 
         Text {
-            text: "Cinza = chega nas próximas fases (ver docs/ROADMAP.md)";
+            text: "Cinza = próximas fases (docs/ROADMAP.md)";
             font-size: Theme.type-label;
             color: Theme.on-surface-var;
             horizontal-alignment: center;

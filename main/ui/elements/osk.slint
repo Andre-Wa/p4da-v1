@@ -14,6 +14,7 @@ export component OnScreenKeyboard inherits Rectangle {
     in property <[string]> r3;
     in property <bool> shift;
     in property <bool> mode;     // false = abc, true = 123/símbolos
+    in property <bool> allow-hide: true;  // false em prompts (o prompt já tem OK/Cancelar)
     callback key(string);        // char imprimível ou token: BACKSPACE/ENTER/
                                  // SPACE/LEFT/RIGHT/UP/DOWN/HOME/END/DEL/MODE/HIDE
     callback shift-changed(bool);
@@ -91,7 +92,7 @@ export component OnScreenKeyboard inherits Rectangle {
             KeyCap { width: 44px; label: "v"; code: "DOWN";  tint: Theme.surface-3; hit(k) => { root.key(k); } }
             KeyCap { horizontal-stretch: 1; label: "espaco"; code: "SPACE"; hit(k) => { root.key(k); } }
             KeyCap { width: 70px; label: "enter"; code: "ENTER"; tint: Theme.primary-container; fg: Theme.on-primary-container; hit(k) => { root.key(k); } }
-            KeyCap { width: 44px; label: "ok"; code: "HIDE"; tint: Theme.surface-3; fg: Theme.on-surface-var; hit(k) => { root.key(k); } }
+            if root.allow-hide: KeyCap { width: 44px; label: "ok"; code: "HIDE"; tint: Theme.surface-3; fg: Theme.on-surface-var; hit(k) => { root.key(k); } }
         }
     }
 }
