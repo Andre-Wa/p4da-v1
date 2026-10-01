@@ -115,3 +115,144 @@ scroll-do-cursor — se mudar um, mude o outro.
   *categoria* ("dir","lua","audio",...) e `IconForKind` (icons.slint) faz o
   mapeamento com literais crus no ternário. Sintoma do erro: espaço
   reservado mas glifo em branco.
+
+## Editor: markdown + cursor (M4.7)
+
+### Markdown de bloco + inline — o que renderiza e como (M4.10)
+- Parser único em `main/md_render.h`, compartilhado com o harness
+  offscreen (`tools/render_offscreen.sh`): o PNG de evidência renderiza o
+  MESMO código que roda na placa.
+- `# `→ h1 (23 px, bold, primary); `## `→ h2 (20 px bold); `### `→ h3
+  (18 px bold primary); parser tolerante: `#sem espaço` também conta.
+- `- `/`* `→ bullet `•` (marcador em primary); `> `→ citação com barra
+  `|` muda à esquerda; cercas ``` → bloco mono verde (a cerca vira linha
+  de respiro; o info-string `lua` não aparece); `---`/`***`→ régua;
+  linha EM BRANCO = estilo 9 (não desenha régua); resto = parágrafo.
+- LISTAS ANINHADAS (M4.11): `  - item` recuado = bullet deslocado
+  (2 espaços = 1 nível, teto 3 níveis); dentro de cercas ``` o recuo
+  continua código. Teste: `tools/md_test.cpp`.
+- INLINE (M4.10): `**x**` e `__x__` → negrito (face 700); `` `x` `` →
+  código verde. Marcador não fechado vira texto literal. Itálico NÃO tem
+  (sem face oblíqua embutida — UI_WISHLIST).
+- Runs por linha (`[[MdRun]]` = text/col/kind): cada trecho é um `Text`
+  posicionado em `6px + col * cell` (cell = fsize*0.6, avanço mono), então
+  negrito/código não precisam de HorizontalLayout e o scroll horizontal
+  virtualizado continua dono do x.
+- Regra de OURO do software renderer (válida p/ qualquer Text): um `Text`
+  cujo `height` é MENOR que a line-box da fonte (1.3188em no PDA Mono:
+  hhea 2146/-555 @ upem 2048) renderiza **zero linhas** — h1 23px precisa
+  de 30.3px em fileira de 28px; o `MdRow` dá folga (height 34px, y -3px)
+  para fsize >= 22px. Linha do editor = `Theme.line-h` (28 px) espelhada
+  em `main.cpp:ED_LINE_H`; avanço mono 0.6em = 10.8px espelhado em
+  `ED_CHAR_W` e no `cell` do editor.slint.
+- Regra de OURO 2 (M4.10): nenhum `Text` de leitura contém ESPAÇO — o
+  glifo de espaço pré-rasterizado às vezes avança 2 células em Texts
+  longos (medido em pixel). O parser quebra em palavras; os vãos são
+  células em branco entre runs. Não "otimize" juntando runs.
+- BOM UTF-8 e CRLF são saneados no `ed_load` (BOM na 1ª linha cegava o
+  detector de `#`).
+- Regra de OURO do software renderer (válida p/ qualquer Text): um `Text`
+  cujo `height` é MENOR que a line-box da fonte (~1.17× font-size no
+  Roboto, ~1.32× no Roboto Mono) renderiza **zero linhas** — foi assim que
+  h1 ficou invisível com linha de 25 px. Linha do editor = `Theme.line-h`
+  (28 px) espelhada em `main.cpp:ED_LINE_H`; avanço mono 0.6 em =
+  10.8 px espelhado em `ED_CHAR_W` e no `cell` do editor.slint.
+- BOM UTF-8 e CRLF são saneados no `ed_load` (BOM na 1ª linha cegava o
+  detector de `#`).
+
+### Cursor do editor
+- O cursor OCUPA O SLOT do caractere (terminal-style): com cursor na col 3
+  de `exemplo` a linha exibida é `exe_plo` (o char some enquanto aceso).
+  No fim da linha o glifo acresce após o último char.
+- bar/under = glifo `|`/`_` embutido na string (mono, avanço = célula).
+- block = caractere virou espaço + overlay `Rectangle` no delegate
+  (`cursor-row/col/on/kind`); `█` não existe em nenhuma fonte embutida.
+- Piscar: esp_timer 530 ms → `s_cursor_on` → `ed_push_ui(false)`; qualquer
+  atividade de cursor rearma a fase aceso (`cursor_rearm`).
+
+### Fontes embutidas (M4.9 — família interna "PDA Mono", peso 400/700)
+- Faces: `Mono-Base.ttf` (wght 400 desde M4.9 — o 300 do M4.8 foi achado
+  fino no painel) + `Mono-Bold.ttf` (700), família interna fixa
+  **"PDA Mono"** (`default-font-family: "PDA Mono"`), hoje originadas da
+  Roboto Mono; + `MaterialIcons-Subset.ttf` (ícones).
+- Trocar de fonte/peso NÃO toca em `.slint` nem em C++: é só
+  `tools/font_pipeline.py --mono <ttf> --weight N` (família é renomeada
+  na name-table). Receita completa, contratos (avanço 0.600em, ligaturas
+  OFF, charset/âncora, licença) e tabela de fontes candidatas em
+  **`docs/FONTES.md`**. Comparativo Roboto×Fira Code:
+  `render_comparo_fontes.png`.
+- Charset: colhido automaticamente dos literais dos `.slint` (comentários
+  removidos) — inclui a âncora Latin-1 de `app_ui.slint`, que garante
+  acentos em texto de runtime; o pipeline FALHA se faltar glifo de char
+  usado pela UI.
+- Avanço mono = 0.6em exato → `ED_CHAR_W` 10.8 px @ type-body 18 px casa
+  com a célula do editor (cursor de slot depende disso).
+- `■`/`█` não existem na Roboto Mono — botões de cursor do settings usam
+  palavras (barra/traço/bloco) e o block-cursor é um Rectangle. (Fira Code
+  tem ambos, mas o contrato de família fixa mantém a UI independente.)
+- Por que explicitar a família default: sem isso o compilador embute o
+  sans do FONTCONFIG do host (máquina de build!) e o `font-weight: 700`
+  não tinha face bold → títulos idênticos ao corpo. Com a família
+  explicitada, a resolução usa os imports do .slint (independe do host).
+
+## Render offscreen no host (harness de validação)
+
+Sem hardware dá para ver EXATAMENTE o que o device renderiza:
+1. `slint-compiler` 1.12.1 (release GitHub, Linux-x86_64) com
+   `--embed-resources embed-for-software-renderer --cpp-file a.cpp --cpp-file b.cpp`
+   (split p/ caber em RAM pequena) sobre `main/ui/app_ui.slint`;
+2. linkar com `Slint-cpp-1.12.1-Linux-x86_64` (Qt6/xkb/gbm via apt) num
+   `WindowAdapter` próprio cujo `renderer()` é um `SoftwareRenderer`
+   (`slint-platform.h`) e `render(span<Rgb8Pixel>, stride)` p/ um buffer;
+3. alimentar propriedades `ed-*` como o `ed_push_ui` faz e dumpar PPM/PNG.
+- Fonte de referência: `tools/offscreen_render_harness.cpp` (compila só no
+  host; não entra no firmware).
+- Modos: `reading`, `reading2`, `edit`, `prompt` e (M4.12) `panel` /
+  `paneldrag` — estes últimos fixam `qs-dragging=true` + `qs-drag` em 192/110
+  px, porque durante o drag a animação tem duração 0 ms e o frame único do
+  harness mostra o estado exato do drag-following. Evidências:
+  `render_panel.png`, `render_paneldrag.png` na raiz.
+
+## Gestos + pulldown de ajustes rápidos (M4.12)
+
+Mapa de gestos (tudo implementado em `app_ui.slint`, camada entre o conteúdo
+e o `PromptOverlay`):
+
+| Gesto | Zona | Efeito |
+|---|---|---|
+| Arrastar p/ baixo | status bar (34 px do topo) | abre o painel seguindo o dedo; solta com >1/3 da altura = abre, senão recolhe |
+| Arrastar p/ cima no grip / toque no grip / toque no scrim | painel | fecha |
+| Arrastar p/ direita da borda esquerda (>36 px, dominante horizontal) | tira de 18 px, qualquer tela menos o launcher | `app-back()` — no gerenciador, `fm-back()` (fecha folha/picker/sobe dir antes de sair) |
+
+Empilhamento (Slint: último declarado = topo do hit-test):
+`conteúdo → tira-esquerda → scrim → QuickPanel → tira-topo → PromptOverlay`.
+- `PromptOverlay` tem TouchArea modal de tela cheia: com prompt aberto
+  (senha Wi-Fi, confirmação de save) nenhum gesto dispara.
+- Tira do topo declarada POR CIMA do painel com `enabled: !qs-open`: painel
+  aberto, o hit-test desce para o grip do QuickPanel.
+- Scrim e painel ficam `visible: false` com altura ≤1 px (não roubam toque).
+- `qs-cur-h` anima (180 ms ease-out) só quando NÃO está arrastando
+  (`animate { duration: qs-dragging ? 0ms : 180ms }`) — drag-following sem
+  lag e sem relayout por frame (conteúdo do painel tem altura fixa 192 px,
+  o clip revela).
+
+Painel (`elements/quick_panel.slint`): grip, slider de brilho (alvo 48 px),
+linha de rede (`cfg-wifi-info` + rssi da status bar, ambos vivos) e três
+atalhos de 48 px — **Redes** (`cfg-open-networks`), **Config**
+(`open-app-dispatch("Config")`), **Suspender** (`cfg-sleep-now`): nenhum
+callback novo de navegação. Sem ícones de propósito (o subset MaterialIcons
+embarcado não tem glifo de sol/wifi/lua; texto não muda o charset).
+
+Persistência do brilho: `on_qs_brightness` aplica o backlight e atualiza a
+RAM a cada tick do slider (zero I/O); `on_qs_state(false)` (painel fechou)
+grava o `system.lua` uma vez. `cfg-save` e o save do cursor limpam a flag
+dirty (eles já persistem tudo).
+
+Alvos de toque: todos os controles do painel têm ≥48 px de altura
+(direção da PRIORIDADE 2 — OSK maior — que será tratada no M4.13).
+- No host sem fontconfig o fontdb do slint-compiler ainda pede um sans
+  default; com `default-font-family: "Roboto Mono"` a resolução usa os
+  IMPORTS do .slint (as faces Light/Bold são custom fonts carregadas antes
+  da query) — não depende mais de fontes instaladas no host. O truque de
+  renomear DejaVu p/ "Arial" em `~/.local/share/fonts` era só p/ hosts sem
+  família default alguma.

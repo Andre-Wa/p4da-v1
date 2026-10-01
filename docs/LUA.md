@@ -25,8 +25,8 @@ return {
 Chaves aceitas (as mesmas da API `pda.settings.*`):
 `display.brightness`, `power.dim_after_s`, `power.screen_off_after_s`,
 `power.deep_sleep_after_s`, `power.wake_on_touch`, `power.light_sleep`, `locale.timezone`,
-`locale.ntp_server`, `ui.onscreen_keyboard_auto`, `ui.scale`
-(1.00 = 100%; multiplica tokens de tamanho/espaço do Theme; 0.90–1.50).
+`locale.ntp_server`, `ui.onscreen_keyboard_auto`, `ui.cursor`
+(`"bar"` | `"under"` | `"block"` — glifo do cursor do editor).
 
 ## 2. Pequenos programas — `scripts/*.lua`
 
@@ -67,3 +67,36 @@ Ver `sdcard-template/pda/scripts/`: `exemplo.lua` (tour pela API) e
 
 Criar telas/widgets próprios (binding Slint↔Lua), spawnar outros scripts,
 acessar rede/áudio (chegam em M4/M5 como novas funções `pda.net.*`/`pda.audio.*`).
+
+## 3. Fronteira C↔Lua — ABI 32 bits (LER ANTES DE TOCAR EM `lua.h`)
+
+O componente `espressif/lua` 5.5.0 compila a VM com `LUA_32BITS=1`
+(`lua_Number` = `float`, `lua_Integer` = `int32`), mas o define é
+**PRIVATE** no CMakeLists do componente — ele NÃO chega aos headers de quem
+consome. Sem compensação, o `main` compila com `double`/`int64` e o link
+casa duas ABIs diferentes (bug público: espressif/developer-portal
+discussion #188). Foi a causa raiz do mistério "INT_MAX no system.lua"
+(boots de 2026-09-24..30): `lua_tonumber` devolvia `float` nos 32 bits
+baixos de `fa0`, o caller lia `double` → lixo finito → `(int)` saturava em
+2147483647 no RISC-V. `docs/HARDWARE.md` (achado #9) tem a autópsia
+completa.
+
+Regras do repositório:
+
+1. **`main/CMakeLists.txt` define `LUA_32BITS=1` (PRIVATE).** Não remover.
+   O `_Static_assert(sizeof(lua_Number)==4 && sizeof(lua_Integer)==4)` no
+   topo de `pda_config.c` falha o build se a premissa mudar (ex.: upgrade
+   do componente para ABI diferente).
+2. **Prefira o caminho inteiro ao cruzar a fronteira**: `lua_tointegerx` /
+   `lua_pushinteger` / `luaL_checkinteger`. `tbl_int` do `pda_config.c` é
+   integer-first de propósito (defesa em profundidade). Só use
+   `lua_tonumber`/`lua_pushnumber` quando fração for realmente necessária —
+   e teste em hardware, não só no host (o Lua 5.4 do x86 é 64 bits e NÃO
+   reproduz o bug de ABI).
+3. **Nunca usar `LUA_REGISTRYINDEX`, `lua_upvalueindex`, `luaL_ref` ou
+   `luaL_Buffer` sem o define do item 1** — `LUAI_MAXSTACK` também muda com
+   `LUA_32BITS`, e pseudo-índices calculados com o valor errado leem slots
+   aleatórios da stack. (Hoje o código não usa nenhum dos quatro.)
+4. Testes de host (`tools/hosttest/`) rodam com o Lua 5.4 do sistema
+   (64 bits) — eles validam LÓGICA (round-trip, cura, shadow), não ABI.
+   O `parser self-test` no boot é quem valida a ABI no alvo.

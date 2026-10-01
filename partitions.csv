@@ -1,5 +1,10 @@
 # Name,   Type, SubType, Offset,  Size,     Flags
+# Flash 16 MB: app "factory" 6 MB (binário chegou a ~4,07 MiB no M4.7 com
+# fontes Roboto R/B embutidas e -O2/PERF) + LittleFS "storage" 8 MB com
+# offset automático. Sobram ~1,9 MB livres no fim do flash (reserva p/
+# futura partição de assets ou slot OTA). Se o app voltar a estourar,
+# opções: CONFIG_COMPILER_OPTIMIZATION_SIZE (-Os) ou subir factory p/ 7M.
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 4M,
+factory,  app,  factory, 0x10000, 6M,
 storage,  data, spiffs,  ,        8M,

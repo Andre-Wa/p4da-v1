@@ -1,6 +1,7 @@
 #pragma once
 #include "esp_err.h"
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,7 +26,8 @@ typedef struct {
     char timezone[48];          /* ex. "America/Sao_Paulo" (uso futuro) */
     char ntp_server[64];        /* uso futuro (fase Wi-Fi)            */
     /* ui */
-    bool onscreen_keyboard_auto;/* teclado virtual só sem HID presente */
+    bool onscreen_keyboard_auto;
+    char cursor_style[8];           /* "bar" | "under" | "block" *//* teclado virtual só sem HID presente */
 } pda_settings_t;
 
 /** Carrega <raiz>/config/system.lua; se não existir, cria com defaults.

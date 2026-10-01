@@ -1,3 +1,0 @@
-Roboto Mono (RobotoMono-Regular.ttf) — Apache License 2.0
-Copyright Google LLC. Subset gerado com pyftsubset (Latin-1 + pontuacao).
-https://www.apache.org/licenses/LICENSE-2.0

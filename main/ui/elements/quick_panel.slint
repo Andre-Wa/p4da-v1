@@ -1,0 +1,161 @@
+// elements/quick_panel.slint — painel de ajustes rápidos pulldown (M4.12)
+//
+// Desliza do TOPO por cima da status bar. O AppWindow é dono do gesto
+// (arrasto na tira do topo) e da altura atual (h, já animada lá); o
+// conteúdo aqui tem altura FIXA (target-h) e o clip do pai o revela aos
+// poucos — drag-following sem relayout por frame.
+//
+// Fechar: grip (toque ou arrasto para cima >24px), scrim (toque fora) ou
+// qualquer atalho. A persistência do brilho acontece no C++ ao fechar
+// (on_qs_state) — o slider só aplica o backlight ao vivo, sem I/O por tick.
+//
+// Sem ícones de propósito: o subset MaterialIcons embarcado não tem glifos
+// de sol/wifi/lua; texto puro não muda o charset (âncora do app_ui.slint).
+import { Slider } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { TonalButton } from "./buttons.slint";
+
+export component QuickPanel inherits Rectangle {
+    in property <length> h: 0px;          // altura corrente (AppWindow anima)
+    in property <length> target-h: 192px; // altura com o painel todo aberto
+    in-out property <float> brightness;   // <=> cfg-brightness do AppWindow
+    in property <string> wifi-info;       // SSID ou "offline" (vivo, do C++)
+    in property <string> wifi-rssi;       // "wifi -54 dBm" (status bar)
+    callback brightness-live(float);
+    callback open-networks();
+    callback open-config();
+    callback sleep-now();
+    callback request-close();
+
+    // gesto de fechar por arrasto para cima no grip
+    property <length> gy0: 0px;
+    property <bool> g-fired: false;
+
+    x: 0px;
+    y: 0px;
+    width: 100%;
+    height: root.h;
+    visible: root.h > 1px;
+    clip: true;
+    background: Theme.surface-1;
+
+    VerticalLayout {
+        width: 100%;
+        height: root.target-h;
+        padding-left: Theme.sp-lg;
+        padding-right: Theme.sp-lg;
+        padding-top: Theme.sp-sm;
+        padding-bottom: Theme.sp-sm;
+        spacing: Theme.sp-sm;
+
+        // ---- grip: toque ou arrasto para cima fecha ----
+        Rectangle {
+            height: 26px;
+            Rectangle {
+                x: (parent.width - 48px) / 2;
+                y: 10px;
+                width: 48px;
+                height: 5px;
+                border-radius: 2px;
+                background: Theme.surface-3;
+            }
+            gta := TouchArea {
+                width: 100%;
+                height: 100%;
+                changed pressed => {
+                    if (self.pressed) {
+                        root.gy0 = self.mouse-y;
+                        root.g-fired = false;
+                    }
+                }
+                moved => {
+                    if (!root.g-fired && self.mouse-y - root.gy0 < -24px) {
+                        root.g-fired = true;
+                        root.request-close();
+                    }
+                }
+                clicked => { root.request-close(); }
+            }
+        }
+
+        // ---- brilho: aplica ao vivo; salva no fechamento ----
+        Rectangle {
+            height: 48px;
+            HorizontalLayout {
+                spacing: Theme.sp-sm;
+                Text {
+                    text: "Brilho";
+                    color: Theme.on-surface-var;
+                    font-size: Theme.type-label;
+                    vertical-alignment: center;
+                }
+                Slider {
+                    minimum: 1;
+                    maximum: 100;
+                    step: 1;
+                    value <=> root.brightness;
+                    horizontal-stretch: 1;
+                    changed value => { root.brightness-live(root.brightness); }
+                }
+                Text {
+                    text: "" + Math.round(root.brightness);
+                    width: 40px;
+                    color: Theme.on-surface;
+                    font-size: Theme.type-label;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                }
+            }
+        }
+
+        // ---- estado da rede (mesma fonte viva da status bar) ----
+        Rectangle {
+            height: 24px;
+            HorizontalLayout {
+                spacing: Theme.sp-sm;
+                Text {
+                    text: "Rede: " + root.wifi-info;
+                    color: Theme.on-surface;
+                    font-size: Theme.type-label;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.wifi-rssi;
+                    color: Theme.on-surface-var;
+                    font-size: Theme.type-label;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // ---- atalhos (todos reusam callbacks existentes do AppWindow) ----
+        HorizontalLayout {
+            spacing: Theme.sp-sm;
+            TonalButton {
+                text: "Redes"; h: 48px; fsize: Theme.type-label;
+                horizontal-stretch: 1;
+                clicked => { root.open-networks(); }
+            }
+            TonalButton {
+                text: "Config"; h: 48px; fsize: Theme.type-label;
+                horizontal-stretch: 1;
+                clicked => { root.open-config(); }
+            }
+            TonalButton {
+                text: "Suspender"; h: 48px; fsize: Theme.type-label;
+                horizontal-stretch: 1;
+                clicked => { root.sleep-now(); }
+            }
+        }
+    }
+
+    // filete inferior de separação (visível com o painel aberto)
+    Rectangle {
+        y: root.target-h - 2px;
+        width: 100%;
+        height: 2px;
+        background: Theme.outline;
+    }
+}

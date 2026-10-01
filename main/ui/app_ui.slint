@@ -8,13 +8,20 @@ import { Theme } from "theme.slint";
 import { Divider } from "elements/surfaces.slint";
 import { IconForKind } from "elements/icons.slint";
 import { PromptOverlay } from "elements/prompt.slint";
+import { QuickPanel } from "elements/quick_panel.slint";
 import { LauncherScreen } from "screens/launcher.slint";
 import { FileManagerScreen } from "screens/files.slint";
 import { NotesListScreen } from "screens/notes.slint";
-import { EditorScreen } from "screens/editor.slint";
+import { EditorScreen, MdRun } from "screens/editor.slint";
 import { ScriptsScreen } from "screens/scripts.slint";
 import { SettingsScreen } from "screens/settings.slint";
 import { NetworksScreen } from "screens/networks.slint";
+// Fonte default da app: família INTERNA "PDA Mono" em TODA a interface.
+// "PDA Mono" é o nome que tools/font_pipeline.py grava na face gerada —
+// a fonte de ORIGEM (hoje Roboto Mono wght 400/700) pode ser trocada por
+// Fira Code, JetBrains Mono etc. sem tocar em nenhum .slint. Os import das
+// faces vivem em screens/editor.slint (quirk de path do slint-compiler
+// 1.12: "../assets/x" resolve de screens/, "./assets/x" daqui não).
 
 export enum AppState {
     Launcher,
@@ -30,6 +37,7 @@ export component AppWindow inherits Window {
     width: 800px;
     height: 480px;
     background: Theme.background;
+    default-font-family: "PDA Mono";
 
     in-out property <AppState> active-app: AppState.Launcher;
 
@@ -54,7 +62,8 @@ export component AppWindow inherits Window {
     in property <string> fm-picker-label: "";
     in property <bool> fm-prompt: false;
     in property <string> fm-prompt-title: "";
-    in property <string> fm-prompt-text: "";
+    in property <string> fm-prompt-pre: "";
+    in property <string> fm-prompt-suf: "";
     in property <bool> fm-prompt-needs-text: false;
     callback request-dir(string);
     callback dir-up();
@@ -81,6 +90,13 @@ export component AppWindow inherits Window {
     in property <bool> ed-dirty: false;
     in property <bool> ed-can-delete: false;
     in property <bool> ed-show-osk: false;
+    in property <bool> ed-reading: false;
+    in property <[int]> ed-line-style;
+    in property <[[MdRun]]> ed-runs;   // runs de markdown inline por linha (M4.10)
+    in property <int> ed-cursor-row: -1;
+    in property <int> ed-cursor-col: 0;
+    in property <bool> ed-cursor-on: true;
+    in property <int> ed-cursor-kind: 0;
     in property <bool> ed-osk-shift: false;
     in property <bool> ed-osk-mode: false;
     in property <[string]> ed-osk-r1;
@@ -92,6 +108,7 @@ export component AppWindow inherits Window {
     callback ed-osk-key(string);
     callback ed-osk-shift-set(bool);
     callback ed-toggle-osk();
+    callback ed-toggle-mode();
     callback ed-save();
     callback ed-delete();
 
@@ -122,19 +139,46 @@ export component AppWindow inherits Window {
     in property <string> cfg-batt-info: "";
     in property <string> cfg-wifi-info: "";
     callback cfg-open-networks();
+    callback cfg-set-cursor(string);
     callback cfg-save();
     callback cfg-reset();
     callback cfg-sleep-now();
     callback cfg-hibernate();
 
+    // ---- quick settings pulldown + gestos (M4.12) ----
+    // qs-dragging/qs-drag são `in-out` de propósito: o harness offscreen os
+    // usa para renderizar o painel aberto/meio-aberto SEM animação
+    // (duration 0ms durante o drag — o render é um frame único), e o gesto
+    // interno também escreve neles (`in` puro proibiria o assign interno).
+    in-out property <bool> qs-open: false;
+    in-out property <bool> qs-dragging: false;
+    in-out property <length> qs-drag: 0px;
+    property <length> qs-y0: 0px;
+    property <length> qs-h: 192px;   // altura do painel aberto (cabe em target-h do QuickPanel)
+    property <length> qs-cur-h: root.qs-dragging ? root.qs-drag
+                              : (root.qs-open ? root.qs-h : 0px);
+    animate qs-cur-h { duration: root.qs-dragging ? 0ms : 180ms; easing: ease-out; }
+    property <length> eg-x0: 0px;
+    property <length> eg-y0: 0px;
+    property <bool> eg-fired: false;
+    callback qs-brightness(float);
+    callback qs-state(bool);
+    changed qs-open => { root.qs-state(root.qs-open); }
+
     // Âncora de rasterização: o software renderer pré-rasteriza apenas os
-    // caracteres presentes em literais ESTÁTICOS do .slint. Sem isto, textos
-    // vindos do C++ (arquivos, notas) perdiam acentos e travessões em runtime.
-    // Latin-1 suplementar + tipográficos, no mesmo font-size do editor.
+    // caracteres presentes em literais ESTÁTICOS do .slint (o charset é
+    // GLOBAL: vale para todas as faces embutidas e todos os pixel-sizes).
+    // Sem isto, textos vindos do C++ (arquivos, notas, OSK 123) perdiam
+    // acentos, travessões e ≠≈∞ em runtime. Latin-1 suplementar +
+    // tipográficos, no mesmo font-size do editor.
+    // O "`" (crase/backtick) entra EXPLÍCITO: o set ASCII embutido no
+    // slint-compiler 1.12 (embed_glyphs.rs) cobre 0x20-0x7E MENOS o 0x60,
+    // então sem ele aqui a tecla do OSK e o `código` das notas renderizam
+    // em branco (bug relatado em 2026-09-29, M4.10).
     Text {
         visible: false;
         font-size: Theme.type-body;
-        text: "¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ–—‘’“”„…†‡•‹›€";
+        text: "`¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ–—‘’“”„…†‡•‹›€≠≈∞";
     }
 
     Timer {
@@ -223,6 +267,13 @@ export component AppWindow inherits Window {
                 dirty: root.ed-dirty;
                 can-delete: root.ed-can-delete;
                 show-osk: root.ed-show-osk;
+                reading: root.ed-reading;
+                line-style: root.ed-line-style;
+                ed-runs: root.ed-runs;
+                cursor-row: root.ed-cursor-row;
+                cursor-col: root.ed-cursor-col;
+                cursor-on: root.ed-cursor-on;
+                cursor-kind: root.ed-cursor-kind;
                 osk-shift: root.ed-osk-shift;
                 osk-mode: root.ed-osk-mode;
                 osk-r1: root.ed-osk-r1;
@@ -235,6 +286,7 @@ export component AppWindow inherits Window {
                 save => { root.ed-save(); }
                 delete-file => { root.ed-delete(); }
                 toggle-osk => { root.ed-toggle-osk(); }
+                toggle-mode => { root.ed-toggle-mode(); }
                 go-back => { root.app-back(); }
             }
             if (root.active-app == AppState.Scripts) : ScriptsScreen {
@@ -272,6 +324,7 @@ export component AppWindow inherits Window {
                 battery-info: root.cfg-batt-info;
                 wifi-info: root.cfg-wifi-info;
                 open-networks => { root.cfg-open-networks(); }
+                set-cursor(c) => { root.cfg-set-cursor(c); }
                 save => { root.cfg-save(); }
                 reset => { root.cfg-reset(); }
                 sleep-now => { root.cfg-sleep-now(); }
@@ -281,10 +334,121 @@ export component AppWindow inherits Window {
         }
     }
 
+    // ---- camada de gestos (M4.12) ----
+    // Ordem de empilhamento (Slint: último declarado = topo do hit-test):
+    //   conteúdo → tira de voltar → scrim → QuickPanel → tira do topo → prompt.
+    // O PromptOverlay tem TouchArea modal de tela cheia, então nada aqui
+    // dispara com prompt aberto (senha Wi-Fi, confirmação de save etc.).
+
+    // Voltar: arrasto da borda esquerda para a direita (>36px, dominante
+    // horizontal). Reusa os MESMOS callbacks dos botões "Voltar" — no
+    // gerenciador, fm-back() fecha folha/picker ou sobe de diretório antes
+    // de sair do app (semântica idêntica à barra).
+    if root.active-app != AppState.Launcher && !root.fm-prompt: Rectangle {
+        x: 0px;
+        y: Theme.status-h;
+        width: 18px;
+        height: root.height - Theme.status-h;
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: Theme.state-pressed;
+            opacity: egta.pressed && !root.eg-fired ? 8% : 0%;
+        }
+        egta := TouchArea {
+            width: 100%;
+            height: 100%;
+            changed pressed => {
+                if (self.pressed) {
+                    root.eg-x0 = self.mouse-x;
+                    root.eg-y0 = self.mouse-y;
+                    root.eg-fired = false;
+                }
+            }
+            moved => {
+                if (!root.eg-fired
+                    && self.mouse-x - root.eg-x0 > 36px
+                    && self.mouse-x - root.eg-x0 > Math.abs(self.mouse-y - root.eg-y0)) {
+                    root.eg-fired = true;
+                    if (root.active-app == AppState.FileManager) { root.fm-back(); }
+                    else { root.app-back(); }
+                }
+            }
+        }
+    }
+
+    // Scrim do pulldown: opacidade acompanha a altura corrente (anima junto);
+    // toque fora do painel fecha.
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        visible: root.qs-cur-h > 1px;
+        background: #000000;
+        opacity: (root.qs-cur-h / root.qs-h) * 0.4;
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => {
+                root.qs-open = false;
+                root.qs-dragging = false;
+                root.qs-drag = 0px;
+            }
+        }
+    }
+
+    // Painel de ajustes rápidos (brilho vivo + redes + config + suspender)
+    QuickPanel {
+        h: root.qs-cur-h;
+        target-h: root.qs-h;
+        brightness <=> root.cfg-brightness;
+        wifi-info: root.cfg-wifi-info;
+        wifi-rssi: root.status-wifi;
+        brightness-live(v) => { root.qs-brightness(v); }
+        open-networks => { root.qs-open = false; root.cfg-open-networks(); }
+        open-config => { root.qs-open = false; root.open-app-dispatch("Config"); }
+        sleep-now => { root.qs-open = false; root.cfg-sleep-now(); }
+        request-close => { root.qs-open = false; }
+    }
+
+    // Tira do topo (status bar): pulldown com drag-following — arrastou
+    // >10px o painel acompanha o dedo; soltou com >1/3 da altura = abre,
+    // senão recolhe. Declarada POR CIMA do painel: com qs-open=true fica
+    // disabled e o hit-test desce para o grip do QuickPanel.
+    Rectangle {
+        y: 0px;
+        width: 100%;
+        height: Theme.status-h;
+        qta := TouchArea {
+            width: 100%;
+            height: 100%;
+            enabled: !root.qs-open;
+            changed pressed => {
+                if (self.pressed) {
+                    root.qs-y0 = self.mouse-y;
+                    root.qs-drag = 0px;
+                    root.qs-dragging = false;
+                } else if (root.qs-dragging) {
+                    root.qs-open = root.qs-drag > root.qs-h / 3;
+                    root.qs-dragging = false;
+                    root.qs-drag = 0px;
+                }
+            }
+            moved => {
+                if (root.qs-dragging) {
+                    root.qs-drag = Math.max(0px,
+                        Math.min(self.mouse-y - root.qs-y0 - 10px, root.qs-h));
+                } else if (self.pressed && self.mouse-y - root.qs-y0 > 10px) {
+                    root.qs-dragging = true;
+                }
+            }
+        }
+    }
+
     // ---- prompt global (senha Wi-Fi, rename, novo dir/arq, confirmações) ----
     if root.fm-prompt: PromptOverlay {
         title: root.fm-prompt-title;
-        text: root.fm-prompt-text;
+        text-pre: root.fm-prompt-pre;
+        text-suf: root.fm-prompt-suf;
         needs-text: root.fm-prompt-needs-text;
         osk-shift: root.ed-osk-shift;
         osk-mode: root.ed-osk-mode;

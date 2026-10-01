@@ -20,7 +20,7 @@ API dentro da mesma major** permitida pelos ranges `^`. Por isso o
 | `espressif/usb_host_hid` | `^1.0.0` | **1.2.1** | >= 5.0 (+ `espressif/usb ^1.0.0`, satisfeito pelo `usb` do próprio IDF 5.5) | ✅ compila (warnings de campos novos em `usb_host_config_t`, inofensivos) |
 | `slint/slint` | `^1.12.1` | 1.18.1 → **rebaixado p/ 1.12.1** | >= 5.1 | ⛔ 1.18.1: regressão de fontes (abaixo); ✅ 1.12.1 é a versão provada no protótipo |
 | `joltwallet/littlefs` | `^1.14.8` | **1.22.3** | >= 5.0 | ✅ compila (nossos campos de `esp_vfs_littlefs_conf_t` existem nessa versão) |
-| `espressif/lua` | `^5.5.0` | **5.5.0** | >= 5.0 | ✅ compila (API 5.5: `lua_newstate` c/ seed, `LUA_RELEASE`) |
+| `espressif/lua` | `^5.5.0` | **5.5.0** | >= 5.0 | ⚠️ compila (API 5.5: `lua_newstate` c/ seed, `LUA_RELEASE`), **mas a VM é 32-bit e o define é PRIVATE** — `main` precisa de `LUA_32BITS=1` (risco #6; causa raiz do INT_MAX, `docs/HARDWARE.md` achado #9) |
 
 ## Riscos residuais (monitorar, não bloqueantes)
 
@@ -43,6 +43,18 @@ API dentro da mesma major** permitida pelos ranges `^`. Por isso o
 5. **IDF 6.x**: não subir. Além do P4 engineering-sample (rev < 3.1 recusado),
    a série 2.x do `esp_lcd_st7701` e outras APIs mudam junto. O teto
    `idf: ">=5.3,<6.0"` no `idf_component.yml` protege o resolve.
+6. **ABI 32-bit do `espressif/lua` (era bug, virou contrato nosso).** O
+   componente compila a VM com `LUA_32BITS=1` (`lua_Number=float`,
+   `lua_Integer=int32`) via `target_compile_definitions(... PRIVATE ...)` —
+   o define NÃO chega aos consumidores (espressif/developer-portal
+   discussion #188). Sem compensação, `lua_tonumber` cruza float→double e
+   devolve lixo (foi o "INT_MAX" do system.lua, 2026-09-24..30). Nosso
+   contrato: `main/CMakeLists.txt` define `LUA_32BITS=1` (PRIVATE) e
+   `pda_config.c` tem `_Static_assert(sizeof(lua_Number)==4 &&
+   sizeof(lua_Integer)==4)` — se alguém atualizar o componente para uma
+   versão com o port header público (`port/include/luaconf.h`, adicionado
+   no master em 2026-01-09) ou com ABI 64-bit, o assert falha o build com
+   a explicação. Regras de fronteira C↔Lua: `docs/LUA.md` §3.
 
 ## Regressão do Slint 1.18.1 (motivo do pin em 1.12.1)
 
@@ -70,3 +82,42 @@ e `SlintPlatformConfiguration` sem `panel_type`.
   e atualize esta tabela com data e versão.
 - Se o resolve começar a falhar do nada: `rm -rf build managed_components
   dependencies.lock sdkconfig` e reconstrua (cache velho de componente).
+
+## Planejado (sem componente novo por enquanto)
+
+- **M4c BLE**: NimBLE/Bluedroid já vêm no ESP-IDF (componente `bt`); o
+  transporte HCI usa o `esp_hosted` 2.12.9 já pinado (slave atual já tem BT
+  HCI — não precisa reflash do C6). Receita de sdkconfig e escopo em
+  `docs/BLUETOOTH.md`.
+- **M5 áudio**: drivers I2S/ES8311 são nativos do IDF (`esp_driver_i2s`,
+  `esp_codec_dev` opcional). Saída imediata DECIDIDA (2026-09-30): usuário
+  não tem o conector JST do falante → **M5a = USB-C UAC** → entra
+  `espressif/usb_host_uac` (esp-iot-solution) + decoder (WAV primeiro;
+  `espressif/esp_audio_codec` p/ MP3 depois). Ver `docs/ROADMAP.md` M5.
+- **App companheiro Android** (`docs/ANDROID_SYNC.md`): HTTP usa
+  `esp_http_server` (nativo do IDF) e descoberta usa `espressif/mdns`
+  (novo pin quando F0/F1 começar); BLE usa o mesmo NimBLE do M4c. Nada
+  entra no `idf_component.yml` antes da fase F0 ser aprovada.
+
+## Fontes embutidas da app (M4.9 — família interna "PDA Mono", peso 400/700)
+
+| asset | origem | peso | nota |
+|---|---|---|---|
+| `Mono-Base.ttf` | `RobotoMono[wght].ttf` instanciado wght=400, família RENOMEADA p/ "PDA Mono" | ~26 KB | default da app inteira (`default-font-family: "PDA Mono"`) |
+| `Mono-Bold.ttf` | idem wght=700 | ~26 KB | bold REAL p/ `font-weight: 700` (títulos, botões) |
+| `MaterialIcons-Subset.ttf` | material-design-icons | ~3,4 KB | inalterado |
+| `LICENSE-mono.txt` | proveniência + Apache-2.0 integral | — | obrigação da licença; regenere junto com as faces |
+
+Os nomes de arquivo são GENÉRICOS de propósito: trocar Roboto Mono por Fira
+Code/JetBrains Mono/etc. é só rodar `tools/font_pipeline.py --mono ...` (ver
+`docs/FONTES.md`) — nenhum `.slint` ou C++ muda. As faces proporcionais e os
+subsets antigos do M4.7/M4.8 foram REMOVIDOS de assets/ (o pipeline regenera
+tudo). Charset: colhido dos literais dos `.slint` (inclui a âncora Latin-1 de
+runtime) + pisos ASCII/Latin-1/box; o `verify_face` do pipeline FALHA se um
+char usado pela UI não tiver glifo. Avanço 0.600em é contrato do cursor do
+editor. Licenças: Apache-2.0 (Roboto Mono) / OFL (alternativas).
+**Por que família default explícita**: o slint-compiler embute como
+"default" o sans do fontconfig da MÁQUINA DE BUILD; com
+`default-font-family: "PDA Mono"` a query resolve nos imports do .slint
+(faces custom carregadas antes da query) — independente do host. Ver
+docs/UI.md §Fontes e docs/FONTES.md.

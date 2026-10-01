@@ -66,6 +66,44 @@ Onde protótipo e placa real divergiam, **a placa real prevalece** (marcado [FIX
    Mitigação do protótipo mantida: `CONFIG_SPIRAM_XIP_FROM_PSRAM=y`. Nossas
    escritas persistentes vão quase todas para o **SD**, não para flash — o que
    reduz ainda mais a janela do problema.
+8. **Saída de áudio EXISTE na placa** (pesquisa de 2026-09-30,
+   `docs/BLUETOOTH.md`): codec ES8311 + amplificador NS4150 (PA_EN=GPIO11)
+   alimentam um **conector de alto-falante** (a família JC4880P4xx tem
+   conector de falante e de mic — conferir o passo na variante antes de
+   comprar o falante). Fone Bluetooth é inviável (C6 é BLE-only; A2DP não
+   existe e LE Audio não tem suporte no IDF p/ C6); alternativa sem solda =
+   fone/DAC **USB-C** via `usb_host_uac` na porta OTG (divide com o teclado
+   HID). BLE p/ sync com telefone, por outro lado, é plenamente viável
+   (NimBLE + HCI sobre o SDIO do ESP-Hosted, sem reflash do C6).
+9. **O "veneno INT_MAX" do system.lua era ABI do Lua, NÃO o cartão SD**
+   (veredito de 2026-09-30, três fontes de evidência). O componente
+   `espressif/lua` 5.5.0 compila a VM com `LUA_32BITS=1` (`lua_Number` =
+   `float`, `lua_Integer` = `int32`), mas o define é **PRIVATE** no
+   CMakeLists dele (`idf-extra-components/lua/CMakeLists.txt`; bug público:
+   espressif/developer-portal discussion #188). O `main/`, sem o define,
+   compilava com `double`/`int64` dos headers:
+   - `lua_tonumber` devolve **float nos 32 bits baixos de `fa0`**; o caller
+     lia `double` (64 bits) → lixo finito → `(int)` no RISC-V satura em
+     **2147483647** (`fcvt.w.d` satura, não é UB na prática) → TODO campo
+     numérico do config virava INT_MAX com `parse=ok`. O self-test do
+     M4.11 pegou exatamente isso no boot seguinte ("FALHOU").
+   - `lua_tointeger` "funcionava" por sorte: o psABI RISC-V garante retorno
+     `int32` sign-extended em `a0`, e o caller lia `int64` de `a0`.
+   - Strings/bools (`wifi.lua`, `save_persists`, censo, dump) nunca foram
+     afetados — por isso o log parecia esquizofrênico.
+   - `pda.settings.get()` de scripts Lua devolvia lixo numérico pelo mesmo
+     motivo (`lua_pushnumber` com double lido como float pela VM).
+   **Cura**: `target_compile_definitions(main PRIVATE LUA_32BITS=1)` no
+   `main/CMakeLists.txt` + `_Static_assert(sizeof(lua_Number)==4)` no
+   `pda_config.c` (o build falha com mensagem clara se o define sumir).
+   **Cartão exonerado**: o cartão de 8 GB passou no teste de mídia instável
+   (duas leituras, FNV-1a idêntico, vários boots) e os dumps sempre
+   mostraram conteúdo íntegro. Os cartões de 4 GB/16 GB "corrompidos" são
+   problema separado (testar com `fsck.fat`/`f3` no PC). Nota: a partir de
+   2026-01-09 o master do idf-extra-components ganhou um `port/include/
+   luaconf.h` público que define `LUA_32BITS` para todos os consumidores —
+   quando o registro publicar versão com esse port, o nosso define vira
+   redundância inofensiva (idempotente).
 
 ## Bateria / conector CN4 (polaridade!)
 

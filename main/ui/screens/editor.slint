@@ -9,7 +9,65 @@ import { Theme } from "../theme.slint";
 import { FilledButton, TonalButton, DangerButton, GhostButton } from "../elements/buttons.slint";
 import { Surface } from "../elements/surfaces.slint";
 import { OnScreenKeyboard } from "../elements/osk.slint";
-import "../assets/RobotoMono-Subset.ttf";
+// Faces da app (M4.8/M4.9): família INTERNA "PDA Mono" — base (peso do
+// --weight do pipeline, hoje 400) + negrito (700). Os arquivos têm nome
+// genérico (Mono-Base/Mono-Bold) para que trocar Roboto Mono por Fira Code
+// ou outra seja só rodar tools/font_pipeline.py: NENHUM .slint muda.
+// Quirk de path do slint-compiler 1.12: "../assets/x.ttf" resolve daqui,
+// "./assets/x.ttf" a partir de main/ui/ não — por isso o import mora aqui.
+import "../assets/Mono-Base.ttf";
+import "../assets/Mono-Bold.ttf";
+
+// Um trecho de linha já segmentado pelo C++ (markdown inline M4.10:
+// **negrito**, `código`). O C++ manda a COLUNA em células mono porque a
+// fonte tem avanço 0.600em por contrato (tools/font_pipeline.py) — assim
+// cada trecho é posicionado por x absoluto, sem HorizontalLayout (que
+// encolheria os Texts e quebraria o scroll horizontal virtualizado).
+export struct MdRun {
+    text: string,
+    col: int,
+    kind: int,   // 0 normal 1 negrito 2 código 3 mudo (barra "|") 4 marcador ("•")
+}
+
+// Linha do modo leitura. Um Text cujo height é menor que o line-box da
+// fonte (1.3188em no PDA Mono) renderiza ZERO linhas no renderer 1.12 —
+// foi assim que o h1 sumiu duas vezes. Para fsize >= 22px (h1: 23px =>
+// line-box 30.3px > linha de 28px) damos folga vertical CENTRADA na linha:
+// o glifo (cap ~0.7em) cabe folgadamente nos 28px da fileira.
+component MdRow inherits Rectangle {
+    in property <[MdRun]> runs;
+    in property <length> fsize: Theme.type-body;
+    in property <int> weight: 400;
+    in property <color> fg: Theme.on-surface;
+    in property <color> code-fg: Theme.success;
+    in property <color> muted-fg: Theme.on-surface-var;
+    in property <color> accent-fg: Theme.primary;
+    property <bool> tall: root.fsize >= 22px;
+    property <length> cell: root.fsize * 6 / 10;   // avanço mono 0.600em
+    width: 100%;
+    height: 100%;
+    for r in root.runs: Text {
+        x: 6px + r.col * root.cell;
+        // NUNCA derive width de self.x: o binding circular x<->width faz o
+        // layout "resolver" o x de runs do meio da linha para qualquer
+        // lugar (medido em pixel: run deslocado 1-2 células). Width fixa
+        // relativa ao pai + clip na Surface resolve; os glifos de cada run
+        // só ocupam o próprio trecho (fonte mono, avanço exato).
+        width: parent.width;
+        y: root.tall ? -3px : 0px;
+        height: root.tall ? 34px : parent.height;
+        text: r.text;
+        font-family: "PDA Mono";
+        font-size: root.fsize;
+        font-weight: r.kind == 1 ? 700 : root.weight;
+        color: r.kind == 2 ? root.code-fg
+             : r.kind == 3 ? root.muted-fg
+             : r.kind == 4 ? root.accent-fg
+             : root.fg;
+        vertical-alignment: center;
+        overflow: clip;
+    }
+}
 
 export component EditorScreen inherits Rectangle {
     in property <string> title;
@@ -20,6 +78,16 @@ export component EditorScreen inherits Rectangle {
     in property <bool> dirty;
     in property <bool> can-delete;
     in property <bool> show-osk;
+    in property <bool> reading;
+    in property <[int]> line-style;
+    in property <[[MdRun]]> ed-runs;     // runs por linha da fatia (leitura)
+    // cursor-bloco (M4.7): overlay vetorial — "█" não existe em família
+    // nenhuma que a gente embute; Rectangle não depende de glifo.
+    in property <int> cursor-row: -1;   // linha DENTRO da fatia visível
+    in property <int> cursor-col: 0;    // coluna em células mono
+    in property <bool> cursor-on: true; // fase do piscar
+    in property <int> cursor-kind: 0;   // 0=bar 1=under 2=block
+    property <length> cell: Theme.type-body * 6 / 10;  // avanço mono 0.6em
     in property <bool> osk-shift;
     in property <bool> osk-mode;
     in property <[string]> osk-r1;
@@ -35,6 +103,7 @@ export component EditorScreen inherits Rectangle {
     callback save();
     callback delete-file();
     callback toggle-osk();
+    callback toggle-mode();
     callback go-back();
 
     VerticalLayout {
@@ -54,6 +123,7 @@ export component EditorScreen inherits Rectangle {
             }
             FilledButton { width: 80px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Salvar"; clicked => { root.save(); } }
             if root.can-delete: DangerButton { width: 80px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Apagar"; clicked => { root.delete-file(); } }
+            GhostButton { width: 80px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: root.reading ? "Editar" : "Ler"; clicked => { root.toggle-mode(); } }
             TonalButton { width: 80px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Tecl"; clicked => { root.toggle-osk(); } }
             GhostButton { width: 80px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Voltar"; clicked => { root.go-back(); } }
         }
@@ -69,17 +139,53 @@ export component EditorScreen inherits Rectangle {
                 width: root.content-w;
                 VerticalLayout {
                     spacing: 0px;
-                    for line in root.lines: Rectangle {
+                    for line[i] in root.lines: Rectangle {
                         height: Theme.line-h;
                         width: root.content-w;
-                        Text {
+                        // separador horizontal SÓ para "---"/"***" (sty 6).
+                        // Linha em branco é sty 9 e não desenha nada.
+                        if root.line-style[i] == 6: Rectangle {
                             x: 6px;
-                            text: line;
-                            font-family: "Roboto Mono";
-                            font-size: Theme.type-body;
-                            color: Theme.on-surface;
-                            vertical-alignment: center;
-                            overflow: elide;
+                            y: 12px;
+                            width: parent.width - 12px;
+                            height: 1px;
+                            background: Theme.outline;
+                        }
+                        if root.reading && root.line-style[i] == 1: MdRow {
+                            runs: root.ed-runs[i];
+                            fsize: Theme.type-title; weight: 700; fg: Theme.primary;
+                        }
+                        if root.reading && root.line-style[i] == 2: MdRow {
+                            runs: root.ed-runs[i];
+                            fsize: Theme.type-subtitle; weight: 700; fg: Theme.on-surface;
+                        }
+                        if root.reading && root.line-style[i] == 8: MdRow {
+                            runs: root.ed-runs[i];
+                            fsize: Theme.type-body; weight: 700; fg: Theme.primary;
+                        }
+                        if root.reading && root.line-style[i] == 4: MdRow {
+                            runs: root.ed-runs[i];
+                            fsize: Theme.type-body; weight: 400; fg: Theme.on-surface-var;
+                        }
+                        if root.reading && root.line-style[i] == 5: MdRow {
+                            runs: root.ed-runs[i];
+                            fsize: Theme.type-body; weight: 400; fg: Theme.success;
+                        }
+                        if root.reading && (root.line-style[i] == 3 || root.line-style[i] == 7 || root.line-style[i] == 9): MdRow {
+                            runs: root.ed-runs[i];
+                            fsize: Theme.type-body; weight: 400; fg: Theme.on-surface;
+                        }
+                        if !root.reading: Text {
+                            x: 6px; width: parent.width - 12px; height: 100%;
+                            text: line; font-family: "PDA Mono"; font-size: Theme.type-body;
+                            color: Theme.on-surface; vertical-alignment: center; overflow: elide;
+                        }
+                        if i == root.cursor-row && root.cursor-on && root.cursor-kind == 2: Rectangle {
+                            x: 6px + root.cursor-col * root.cell;
+                            y: 3px;
+                            width: root.cell;
+                            height: 22px;
+                            background: Theme.primary;
                         }
                     }
                 }

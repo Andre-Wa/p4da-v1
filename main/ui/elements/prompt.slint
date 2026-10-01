@@ -7,7 +7,10 @@ import { OnScreenKeyboard } from "../elements/osk.slint";
 
 export component PromptOverlay inherits Rectangle {
     in property <string> title;
-    in property <string> text;
+    // Campo de texto com cursor real (M4.8): o C++ manda o texto partido
+    // em pré/pós-cursor — o caret é o Rectangle de 2px entre os dois.
+    in property <string> text-pre;
+    in property <string> text-suf;
     in property <bool> needs-text;
     in property <bool> osk-shift;
     in property <bool> osk-mode;
@@ -56,16 +59,38 @@ export component PromptOverlay inherits Rectangle {
                 border-radius: Theme.shape-sm;
                 border-width: 1px;
                 border-color: Theme.primary;
-                Text {
-                    x: Theme.sp-sm;
-                    width: parent.width - Theme.sp-sm * 2;
-                    height: 100%;
-                    font-family: "Roboto Mono";
-                    text: root.text + "|";
-                    font-size: Theme.type-body;
-                    color: Theme.on-surface;
-                    vertical-alignment: center;
-                    overflow: elide;
+                clip: true;
+                HorizontalLayout {
+                    padding-left: Theme.sp-sm;
+                    padding-right: Theme.sp-sm;
+                    spacing: 0px;
+                    Text {
+                        text: root.text-pre;
+                        font-family: "PDA Mono";
+                        font-size: Theme.type-body;
+                        color: Theme.on-surface;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 3px;
+                        height: 100%;
+                        Rectangle {
+                            x: 0px;
+                            y: (parent.height - 24px) / 2;
+                            width: 2px;
+                            height: 24px;
+                            background: Theme.primary;
+                        }
+                    }
+                    Text {
+                        text: root.text-suf;
+                        font-family: "PDA Mono";
+                        font-size: Theme.type-body;
+                        color: Theme.on-surface;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
                 }
             }
             HorizontalLayout {

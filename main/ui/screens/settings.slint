@@ -72,6 +72,7 @@ export component SettingsScreen inherits Rectangle {
     callback sleep-now();
     callback hibernate();
     callback open-networks();
+    callback set-cursor(string);
     callback go-back();
 
     HorizontalLayout {
@@ -161,6 +162,15 @@ export component SettingsScreen inherits Rectangle {
                 SwitchRow { label: "Teclado virtual só sem USB"; value <=> root.osk-auto; }
                 SwitchRow { label: "Toque segura o idle / acorda (INT GT911)"; value <=> root.wake-touch; }
                 SwitchRow { label: "Light sleep no standby (exp.: quebra SD/Wi-Fi/USB no wake)"; value <=> root.light-sleep; }
+                HorizontalLayout {
+                    spacing: Theme.sp-sm;
+                    Text { text: "Cursor do editor:"; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
+                    // Rótulos em palavra (M4.8): "■" não existe na Roboto
+                    // Mono (default da UI) — nada de glifo fora do charset.
+                    GhostButton { width: 76px; fsize: Theme.type-label; text: "barra"; clicked => { root.set-cursor("bar"); } }
+                    GhostButton { width: 76px; fsize: Theme.type-label; text: "traço"; clicked => { root.set-cursor("under"); } }
+                    GhostButton { width: 76px; fsize: Theme.type-label; text: "bloco"; clicked => { root.set-cursor("block"); } }
+                }
             }
 
             if root.tab == 3: VerticalLayout {
@@ -177,10 +187,10 @@ export component SettingsScreen inherits Rectangle {
 
             if root.tab == 4: VerticalLayout {
                 spacing: Theme.sp-sm;
-                Text { text: "PDA p4da — M4.5"; color: Theme.on-surface; font-size: Theme.type-title; font-weight: 700; }
+                Text { text: "PDA p4da — M4.12"; color: Theme.on-surface; font-size: Theme.type-title; font-weight: 700; }
                 Text { text: "Placa: GUITION JC4880P443C_I_W (ESP32-P4 + C6)"; color: Theme.on-surface-var; font-size: Theme.type-label; }
                 Text { text: "IDF 5.5.1 · Slint 1.12.1 · Lua 5.5 · ESP-Hosted 2.12.9"; color: Theme.on-surface-var; font-size: Theme.type-label; }
-                Text { text: "Ícones: Material Icons (Apache-2.0) · Fonte editor: Roboto Mono (Apache-2.0)"; color: Theme.on-surface-var; font-size: Theme.type-label; wrap: word-wrap; }
+                Text { text: "Ícones: Material Icons (Apache-2.0) · Fonte: PDA Mono 400/700 (Apache-2.0)"; color: Theme.on-surface-var; font-size: Theme.type-label; wrap: word-wrap; }
                 Text { text: "Docs: docs/ROADMAP.md · docs/UI_WISHLIST.md"; color: Theme.on-surface-var; font-size: Theme.type-label; }
             }
         }

@@ -22,6 +22,11 @@
 
 ## Modelo de armazenamento
 
+- Flash 16 MB (`partitions.csv`): NVS 24 KB @ 0x9000 · phy 4 KB ·
+  **`factory` (app) 6 MB @ 0x10000** · **`storage` (LittleFS) 8 MB** com
+  offset automático (0x610000). ~1,9 MB livres no fim do flash. O app
+  passou de 4 MB no M4.7 (fontes Roboto R/B embutidas + -O2/PERF) — por
+  isso a partição cresceu de 4M para 6M.
 - `/internal` — LittleFS (partição `storage`, 8 MB). Sempre montado.
 - `/sdcard` — FatFS via SDMMC 4-bit @ 40 MHz. Montado se houver cartão.
 - **Raiz lógica do sistema**: `pda_root()` = `/sdcard/pda` com cartão,

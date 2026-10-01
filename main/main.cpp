@@ -11,6 +11,7 @@
 
 #include "slint-esp.h"
 #include "app_ui.h"   // gerado a partir de ui/app_ui.slint
+#include "md_render.h"  // parser markdown de bloco+inline (compartilhado c/ harness)
 
 #include "board_config.h"
 #include "display_init.h"
@@ -33,6 +34,7 @@
 #include <mutex>
 #include <thread>
 #include <functional>
+#include <algorithm>
 #include <new>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -55,15 +57,20 @@ static std::string s_session_app = "launcher";
 static std::string s_session_note = "";
 
 /* Geometria do editor — ESPELHA os tokens ESTÁTICOS do theme.slint
- * (line-h 25, osk-h 193, status-h 34, btn-h-sm 39, body 18px => ~11px/char).
+ * (line-h 28, osk-h 193, status-h 34, btn-h-sm 39, body 18px => avanço
+ * mono 0.6em = 10.8px/char).
  * Modelo 100% estático: escala de UI se muda com tools/scale_type.py +
  * rebuild (o renderer pré-rasteriza fontes; e tokens mutáveis em runtime
- * já nos custaram um bootloop por NaN). Se mudar token lá, mude aqui. */
-static const float ED_LINE_H = 25.f;
+ * já nos custaram um bootloop por NaN). Se mudar token lá, mude aqui.
+ * line-h 28 (M4.7): a line-box do PDA Mono é 1.3188em — h1 23px dá 30.3px,
+ * MAIOR que a fileira de 28px. Text com height menor que a line-box
+ * renderiza ZERO linhas no renderer 1.12 (título em branco, 2x), então o
+ * MdRow do editor.slint dá folga vertical centrada p/ fsize >= 22px. */
+static const float ED_LINE_H = 28.f;
 static const float ED_OSK_H = 193.f;
 static const float ED_STATUS_H = 34.f;
 static const float ED_BTN_SM = 39.f;
-static const int ED_CHAR_W = 11;
+static const float ED_CHAR_W = 10.8f;
 
 static void activity(void) { power_mgmt_activity(); }
 
@@ -73,6 +80,8 @@ static void refresh_scripts_list(void);
 static void list_dir_async(const std::string dir);
 static void nav_goto(AppState st);
 static void nav_back(void);
+static size_t utf8_next(const std::string &t, size_t pos);
+static size_t utf8_count(const std::string &t, size_t end);
 
 /** std::thread com pilha explícita: o default do IDF (~3K) estoura a VM Lua
  *  e é apertado p/ readdir+FATFS. Chamado NA task que cria a thread. */
@@ -231,6 +240,7 @@ struct EditorState {
     bool dirty = false;
     bool is_new = false;
     int osk_override = -1;     /* -1 auto, 0 força off, 1 força on */
+    bool reading = false;      /* modo leitura (markdown renderizado) */
     bool osk_shift = false;
     bool osk_mode = false;     /* false = abc, true = 123/símbolos */
 };
@@ -253,17 +263,84 @@ static std::string ed_title(void)
 
 static bool ed_osk_should_show(void)
 {
+    if (g_ed.reading) return false;
     if (g_ed.osk_override >= 0) return g_ed.osk_override == 1;
     return pda_settings()->onscreen_keyboard_auto && !usb_hid_keyboard_connected();
 }
 
-/* ---- vista virtualizada do editor (M3c + fim dos resets de scroll) ----
- * O C++ é dono da posição (s_ed_top/s_ed_left); a UI recebe só a fatia
- * visível + offset pixel. Sem Flickable, sem binding bidirecional, sem
- * reset de viewport a cada tecla. */
-static std::vector<std::string> g_ed_disp;   /* linhas de exibição completas */
+/* ---- vista virtualizada do editor (M4.6) ----
+ * C++ dono da posição; UI recebe fatia visível + estilos por linha.
+ * Modos: edição (linhas cruas + cursor) e leitura (markdown renderizado). */
+static std::vector<std::string> g_ed_disp;    /* modo edição (cursor embutido) */
+static std::vector<std::string> g_md_text;    /* modo leitura */
+static std::vector<int> g_md_style;
+static std::shared_ptr<slint::VectorModel<slint::SharedString>> g_ed_model;
+static std::shared_ptr<slint::VectorModel<int>> g_ed_style_model;
+/* runs de markdown inline por linha da fatia visível (modelo de modelos) */
+static std::shared_ptr<slint::VectorModel<std::shared_ptr<slint::Model<MdRun>>>> g_ed_runs_model;
 static float s_ed_top = 0.f;
 static float s_ed_left = 0.f;
+static bool s_cursor_on = true;
+static int s_cur_line = 0;   /* posição do cursor p/ overlay do block (M4.7) */
+static int s_cur_col = 0;    /* coluna em BYTES (scroll horizontal) */
+static int s_cur_cell = 0;   /* coluna em CÉLULAS/codepoints (overlay .slint) */
+static esp_timer_handle_t s_blink_t = nullptr;   /* criado em app_main */
+
+/* M4.12 — pulldown de ajustes rápidos: o slider de brilho aplica o
+ * backlight AO VIVO (on_qs_brightness) mas só grava o system.lua quando o
+ * painel fecha (on_qs_state). Sem esse debounce cada pixel de arrasto vira
+ * uma escrita no cartão. */
+static bool s_qs_dirty = false;
+
+/* Rearma a fase do piscar: o cursor acende já e a próxima alternância só
+ * vem um ciclo inteiro depois. Chamado a cada atividade de cursor (digita,
+ * seta, toque) para ele não sumir logo após um toque de tecla. */
+static void cursor_rearm(void)
+{
+    s_cursor_on = true;
+    if (s_blink_t != nullptr) {
+        esp_timer_stop(s_blink_t);   /* não rodando -> retorna erro, inofensivo */
+        esp_timer_start_periodic(s_blink_t, 530 * 1000);
+    }
+}
+
+/* 0=bar 1=under 2=block (M4.7: block é overlay Rectangle no .slint —
+ * "█" não existe em nenhuma fonte embutida). */
+static int cursor_kind(void)
+{
+    const char *st = pda_settings()->cursor_style;
+    if (!strcmp(st, "under")) return 1;
+    if (!strcmp(st, "block")) return 2;
+    return 0;
+}
+
+static const char *cursor_glyph(void)
+{
+    return cursor_kind() == 1 ? "_" : "|";
+}
+
+/* Markdown de bloco+inline (M4.10): o parser mora em md_render.h e é o
+ * MESMO que o harness offscreen renderiza (evidência sem hardware).
+ * Estilos: 0=mono edição 1=h1 2=h2 8=h3 3=bullet 4=citação 5=código
+ * 6=hr (SÓ "---"/"***") 7=parágrafo 9=linha em branco (sem régua).
+ * Tolerante: aceita "#" sem espaço e até 3 níveis; BOM/CRLF saneados no
+ * ed_load. Inline: **negrito**, __negrito__ e `código` (runs por linha). */
+static std::vector<std::vector<MdRunLite>> g_md_runs;
+
+static void md_render_doc(const std::string &text)
+{
+    std::vector<MdLineOut> doc;
+    md_render(text, doc);
+    g_md_text.clear(); g_md_style.clear(); g_md_runs.clear();
+    g_md_text.reserve(doc.size());
+    g_md_style.reserve(doc.size());
+    g_md_runs.reserve(doc.size());
+    for (auto &l : doc) {
+        g_md_text.push_back(l.text);
+        g_md_style.push_back(l.sty);
+        g_md_runs.push_back(std::move(l.runs));
+    }
+}
 
 static int ed_area_h(void)
 {
@@ -275,12 +352,14 @@ static int ed_area_w(void) { return 800 - 2 * 9 - 2; }
 
 static void ed_refresh_view(void)
 {
-    float content_h = (float)g_ed_disp.size() * ED_LINE_H;
+    const std::vector<std::string> &src = g_ed.reading ? g_md_text : g_ed_disp;
+    const std::vector<int> &srcs = g_md_style;
+
+    float content_h = (float)src.size() * ED_LINE_H;
     float maxtop = content_h - (float)ed_area_h();
     if (maxtop < 0) maxtop = 0;
     if (s_ed_top < 0) s_ed_top = 0;
     if (s_ed_top > maxtop) s_ed_top = maxtop;
-
     float maxleft = g_ui->get_ed_content_w() - (float)ed_area_w();
     if (maxleft < 0) maxleft = 0;
     if (s_ed_left < 0) s_ed_left = 0;
@@ -288,14 +367,54 @@ static void ed_refresh_view(void)
 
     int start = (int)(s_ed_top / ED_LINE_H);
     int rows = ed_area_h() / (int)ED_LINE_H + 2;
-    auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
-    for (int i = start; i < (int)g_ed_disp.size() && i < start + rows; i++)
-        model->push_back(slint::SharedString(g_ed_disp[i]));
-    if (model->row_count() == 0)
-        model->push_back(slint::SharedString(""));
-    g_ui->set_ed_lines(model);
+    if (!g_ed_model) {
+        g_ed_model = std::make_shared<slint::VectorModel<slint::SharedString>>();
+        g_ui->set_ed_lines(g_ed_model);
+    }
+    if (!g_ed_style_model) {
+        g_ed_style_model = std::make_shared<slint::VectorModel<int>>();
+        g_ui->set_ed_line_style(g_ed_style_model);
+    }
+    if (!g_ed_runs_model) {
+        g_ed_runs_model =
+            std::make_shared<slint::VectorModel<std::shared_ptr<slint::Model<MdRun>>>>();
+        g_ui->set_ed_runs(g_ed_runs_model);
+    }
+    std::vector<slint::SharedString> tv;
+    std::vector<int> sv;
+    std::vector<std::shared_ptr<slint::Model<MdRun>>> rv;
+    for (int i = start; i < (int)src.size() && i < start + rows; i++) {
+        tv.push_back(slint::SharedString(src[i]));
+        sv.push_back(g_ed.reading ? srcs[i] : 0);
+        auto rm = std::make_shared<slint::VectorModel<MdRun>>();
+        if (g_ed.reading && i < (int)g_md_runs.size()) {
+            for (const auto &r : g_md_runs[i]) {
+                MdRun m;
+                m.text = slint::SharedString(r.text);
+                m.col = r.col;
+                m.kind = r.kind;
+                rm->push_back(m);
+            }
+        }
+        rv.push_back(rm);
+    }
+    if (tv.empty()) { tv.push_back(slint::SharedString("")); sv.push_back(0); }
+    size_t nslice = tv.size();
+    g_ed_model->set_vector(std::move(tv));
+    g_ed_style_model->set_vector(std::move(sv));
+    g_ed_runs_model->set_vector(std::move(rv));
     g_ui->set_ed_offset(s_ed_top - (float)start * ED_LINE_H);
     g_ui->set_ed_offset_x(s_ed_left);
+    /* overlay do cursor-bloco (M4.7): linha dentro da fatia + coluna */
+    int crow = -1;
+    if (!g_ed.reading && cursor_kind() == 2 && s_cursor_on) {
+        int r = s_cur_line - start;
+        if (r >= 0 && r < (int)nslice) crow = r;
+    }
+    g_ui->set_ed_cursor_row(crow);
+    g_ui->set_ed_cursor_col(s_cur_cell);
+    g_ui->set_ed_cursor_on(s_cursor_on);
+    g_ui->set_ed_cursor_kind(cursor_kind());
 }
 
 static void ed_ensure_cursor_visible(int cursor_line, int cursor_col)
@@ -312,6 +431,9 @@ static void ed_ensure_cursor_visible(int cursor_line, int cursor_col)
 
 static void ed_push_ui(bool scroll_to_cursor)
 {
+    /* atividade de cursor -> pisca recomeça com ele aceso */
+    if (scroll_to_cursor && !g_ed.reading) cursor_rearm();
+
     std::vector<std::string> lines;
     int cursor_line = 0, cursor_col = 0;
     {
@@ -330,16 +452,42 @@ static void ed_push_ui(bool scroll_to_cursor)
     }
     if (lines.empty()) lines.push_back("");
 
-    std::vector<std::string> disp = lines;
-    if ((size_t)cursor_col > disp[cursor_line].size())
-        cursor_col = (int)disp[cursor_line].size();
-    disp[cursor_line].insert(disp[cursor_line].begin() + cursor_col, '|');
-    g_ed_disp = disp;
+    /* modo edição: cursor visível (pisca via s_cursor_on).
+     * M4.7: o cursor OCUPA O SLOT do caractere em vez de inserir uma
+     * célula extra — "exemplo" com cursor na col 3 vira "exe_plo", não
+     * "exe_mplo". O caractere sob o cursor some enquanto ele está aceso
+     * (bar/under: glifo no lugar; block: espaço + Rectangle no .slint).
+     * No fim da linha o glifo é acrescentado após o último char. */
+    g_ed_disp = lines;
+    if (!g_ed.reading) {
+        if ((size_t)cursor_col > g_ed_disp[cursor_line].size())
+            cursor_col = (int)g_ed_disp[cursor_line].size();
+        s_cur_line = cursor_line;
+        s_cur_col = cursor_col;
+        s_cur_cell = (int)utf8_count(lines[cursor_line], (size_t)cursor_col);
+        if (s_cursor_on) {
+            std::string &L = g_ed_disp[cursor_line];
+            size_t cc = (size_t)cursor_col;
+            size_t nx = (cc < L.size()) ? utf8_next(L, cc) : cc;
+            if (cursor_kind() == 2) {
+                L.replace(cc, nx - cc, " ");
+            } else if (cc < L.size()) {
+                L.replace(cc, nx - cc, cursor_glyph());
+            } else {
+                L += cursor_glyph();
+            }
+        }
+    } else {
+        s_cur_line = cursor_line;
+        s_cur_col = cursor_col;
+        s_cur_cell = (int)utf8_count(lines[cursor_line], (size_t)cursor_col);
+    }
+    md_render_doc(g_ed.text);
 
     size_t maxw = 0;
-    for (auto &d : disp) if (d.size() > maxw) maxw = d.size();
+    const std::vector<std::string> &wsrc = g_ed.reading ? g_md_text : g_ed_disp;
+    for (auto &d : wsrc) if (d.size() > maxw) maxw = d.size();
 
-    /* propriedades: só escreve quando mudam */
     static float s_last_w = -1.f;
     static std::string s_last_title;
     static int s_last_flags = -1;
@@ -349,15 +497,16 @@ static void ed_push_ui(bool scroll_to_cursor)
     if (title != s_last_title) { g_ui->set_ed_title(slint::SharedString(title)); s_last_title = title; }
     bool can_del = g_ed.path.rfind(notes_dir() + "/", 0) == 0;
     bool osk = ed_osk_should_show();
-    int flags = (g_ed.dirty ? 1 : 0) | (can_del ? 2 : 0) | (osk ? 4 : 0);
+    int flags = (g_ed.dirty ? 1 : 0) | (can_del ? 2 : 0) | (osk ? 4 : 0) | (g_ed.reading ? 8 : 0);
     if (flags != s_last_flags) {
         g_ui->set_ed_dirty(g_ed.dirty);
         g_ui->set_ed_can_delete(can_del);
         g_ui->set_ed_show_osk(osk);
+        g_ui->set_ed_reading(g_ed.reading);
         s_last_flags = flags;
     }
 
-    if (scroll_to_cursor) ed_ensure_cursor_visible(cursor_line, cursor_col);
+    if (scroll_to_cursor && !g_ed.reading) ed_ensure_cursor_visible(cursor_line, cursor_col);
     ed_refresh_view();
 }
 
@@ -389,6 +538,16 @@ static size_t utf8_next(const std::string &t, size_t pos)
     if (pos >= t.size()) return t.size();
     size_t n = pos + 1;
     while (n < t.size() && utf8_is_cont(t[n])) n++;
+    return n;
+}
+
+/* codepoints em t[0..end) — p/ converter coluna-bytes em coluna-células
+ * (o overlay do cursor-bloco no .slint posiciona por célula mono). */
+static size_t utf8_count(const std::string &t, size_t end)
+{
+    size_t n = 0;
+    for (size_t i = 0; i < end && i < t.size(); i++)
+        if (!utf8_is_cont(t[i])) n++;
     return n;
 }
 
@@ -467,13 +626,35 @@ static void ed_move(int dcol, int dline, bool home, bool end)
     ed_push_ui(true);
 }
 
-static void ed_load(const std::string &path, const std::string &content, bool is_new)
+static void ed_load(const std::string &path, const std::string &content_in,
+                    bool is_new, bool start_reading)
 {
+    /* M4.7: saneamento de texto vindo do cartão/USB: BOM UTF-8 na 1ª linha
+     * cegava o md_render ("# título" virava parágrafo cru) e \r de CRLF
+     * vazava para as linhas do .slint. */
+    std::string content = content_in;
+    if (content.size() >= 3 && (unsigned char)content[0] == 0xEF &&
+        (unsigned char)content[1] == 0xBB && (unsigned char)content[2] == 0xBF)
+        content.erase(0, 3);
+    if (content.find('\r') != std::string::npos) {
+        std::string norm;
+        norm.reserve(content.size());
+        for (size_t i = 0; i < content.size(); i++) {
+            if (content[i] == '\r') {
+                if (i + 1 < content.size() && content[i + 1] == '\n') continue;
+                norm.push_back('\n');
+            } else {
+                norm.push_back(content[i]);
+            }
+        }
+        content.swap(norm);
+    }
     g_ed.path = path;
     g_ed.text = content;
     g_ed.cursor = 0;
     g_ed.dirty = false;
     g_ed.is_new = is_new;
+    g_ed.reading = start_reading;
     g_ed.osk_override = -1;
     s_ed_top = 0.f;
     s_ed_left = 0.f;
@@ -483,9 +664,9 @@ static void ed_load(const std::string &path, const std::string &content, bool is
     s_session_note = is_new ? std::string("") : ed_title();
 }
 
-static void ed_open_path_async(const std::string path)
+static void ed_open_path_async(const std::string path, bool start_reading)
 {
-    spawn_thread("io_edit", 8192, [path]() {
+    spawn_thread("io_edit", 8192, [path, start_reading]() {
         char *data = NULL; size_t len = 0;
         std::string content;
         if (storage_read_file_alloc(path.c_str(), &data, &len) == ESP_OK) {
@@ -497,8 +678,8 @@ static void ed_open_path_async(const std::string path)
             log_line(buf, NULL);
             return;
         }
-        slint::invoke_from_event_loop([path, content]() {
-            ed_load(path, content, false);
+        slint::invoke_from_event_loop([path, content, start_reading]() {
+            ed_load(path, content, false, start_reading);
         });
     });
 }
@@ -536,7 +717,7 @@ static const char *s_osk_rows[2][2][3] = {
         { "Q W E R T Y U I O P", "A S D F G H J K L Ç", "Z X C V B N M , . ;" },
     },
     {   /* modo 123/símbolos */
-        { "1 2 3 4 5 6 7 8 9 0", "! @ # $ % ^ & * ( )", "- = [ ] \\ _ + { } |" },
+        { "1 2 3 4 5 6 7 8 9 0", "! @ # $ % ^ & * ( )", "` - = [ ] \\ _ + { } |" },
         { "` ~ € £ ¥ ° ¶ • ª º", "< > ? / : ; \" ' ´ ¨", "+ - × ÷ = ≠ ≈ ∞ § ¤" },
     },
 };
@@ -704,6 +885,7 @@ struct FmState {
     bool prompt = false;
     std::string prompt_title;
     std::string prompt_text;
+    size_t prompt_pos = 0;      /* cursor do prompt (offset de byte UTF-8) */
     std::string prompt_action;  /* rename | newdir | delete */
     bool prompt_needs_text = false;
 };
@@ -748,7 +930,12 @@ static void push_fm_ui(void)
     g_ui->set_fm_picker_label(slint::SharedString(g_fm.picker_label));
     g_ui->set_fm_prompt(g_fm.prompt);
     g_ui->set_fm_prompt_title(slint::SharedString(g_fm.prompt_title));
-    g_ui->set_fm_prompt_text(slint::SharedString(g_fm.prompt_text));
+    /* campo com cursor: parte o texto no caret (o overlay desenha
+     * pré | caret | sufixo — setas do OSK movem o caret, M4.8). */
+    size_t pp = g_fm.prompt_pos;
+    if (pp > g_fm.prompt_text.size()) pp = g_fm.prompt_text.size();
+    g_ui->set_fm_prompt_pre(slint::SharedString(g_fm.prompt_text.substr(0, pp)));
+    g_ui->set_fm_prompt_suf(slint::SharedString(g_fm.prompt_text.substr(pp)));
     g_ui->set_fm_prompt_needs_text(g_fm.prompt_needs_text);
 }
 
@@ -782,7 +969,8 @@ static void fm_open_entry(const std::string name)
         return;
     }
     if (is_textish(name.c_str())) {
-        ed_open_path_async(full);
+        bool md = name.size() > 3 && !strcasecmp(name.c_str() + name.size() - 3, ".md");
+        ed_open_path_async(full, md);
         return;
     }
     char buf[256];
@@ -816,27 +1004,39 @@ static std::string generate_new_note_name(void)
     return "nota" + std::to_string(max_n + 1);
 }
 
+/* Nomes REAIS dos arquivos de notas (o display stripa ".txt"). Preenchido
+ * na thread de UI junto com o modelo; open_note usa para mapear
+ * display -> arquivo (bug pré-M4.8: qualquer nota ganhava ".txt" extra e
+ * ".md" nunca abria daqui). */
+static std::vector<std::string> s_notes_real;
+
 static void refresh_notes_list(void)
 {
     spawn_thread("io_notes", 8192, []() {
         auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
+        auto pairs = std::make_shared<std::vector<std::pair<std::string, std::string>>>();
         DIR *dir = opendir(notes_dir().c_str());
-        int count = 0;
         if (dir) {
             struct dirent *ent;
             while ((ent = readdir(dir)) != NULL) {
                 std::string name(ent->d_name);
                 if (name == "." || name == "..") continue;
-                if (name.size() > 4 && name.compare(name.size() - 4, 4, ".txt") == 0)
-                    name = name.substr(0, name.size() - 4);
-                model->push_back(slint::SharedString(name));
-                count++;
+                std::string disp = name;
+                if (disp.size() > 4 && disp.compare(disp.size() - 4, 4, ".txt") == 0)
+                    disp = disp.substr(0, disp.size() - 4);
+                pairs->emplace_back(disp, name);
             }
             closedir(dir);
         }
-        if (count == 0)
+        std::sort(pairs->begin(), pairs->end());
+        for (auto &pr : *pairs) model->push_back(slint::SharedString(pr.first));
+        if (pairs->empty())
             model->push_back(slint::SharedString("(nenhuma nota — toque em + Nova nota)"));
-        slint::invoke_from_event_loop([model]() { g_ui->set_notes_list(model); });
+        slint::invoke_from_event_loop([model, pairs]() {
+            s_notes_real.clear();
+            for (auto &pr : *pairs) s_notes_real.push_back(pr.second);
+            g_ui->set_notes_list(model);
+        });
     });
 }
 
@@ -925,7 +1125,7 @@ static void session_restore_if_needed(void)
     ESP_LOGI(TAG, "restaurando sessão: app=%s note=%s", app.c_str(), note.c_str());
     if (app == "noteedit" && !note.empty()) {
         std::string full = std::string(pda_root()) + "/" + note;
-        ed_open_path_async(full);
+        ed_open_path_async(full, true);
     } else if (app == "notes") {
         refresh_notes_list();
         g_ui->set_active_app(AppState::NotesList);
@@ -1027,6 +1227,31 @@ extern "C" void app_main(void)
     /* ---------- status bar ---------- */
     ui->on_tick([]() { update_clock(); });
 
+    /* ---------- cursor piscante (~530 ms) ----------
+     * Callback do esp_timer roda em task de sistema: só agenda o toggle no
+     * loop de eventos do Slint. Alterna apenas com o Editor ativo e fora do
+     * modo leitura; a fase é rearmada por cursor_rearm() (via ed_push_ui). */
+    {
+        esp_timer_create_args_t bargs = {};
+        bargs.callback = [](void *arg) {
+            (void)arg;
+            slint::invoke_from_event_loop([]() {
+                if (g_ui && g_ui->get_active_app() == AppState::Editor &&
+                    !g_ed.reading) {
+                    s_cursor_on = !s_cursor_on;
+                    ed_push_ui(false);
+                }
+            });
+        };
+        bargs.arg = nullptr;
+        bargs.name = "cursor_blink";
+        if (esp_timer_create(&bargs, &s_blink_t) == ESP_OK) {
+            esp_timer_start_periodic(s_blink_t, 530 * 1000);
+        } else {
+            s_blink_t = nullptr;
+        }
+    }
+
     /* ---------- launcher ---------- */
     ui->on_open_app_dispatch([](slint::SharedString name) {
         activity();
@@ -1115,6 +1340,7 @@ extern "C" void app_main(void)
             g_fm.prompt_needs_text = true;
             g_fm.prompt_title = "Renomear \"" + g_fm.sheet_name + "\" para:";
             g_fm.prompt_text = g_fm.sheet_name;
+            g_fm.prompt_pos = g_fm.prompt_text.size();
             g_fm.prompt_action = "rename";
             push_fm_ui();
             return;
@@ -1145,6 +1371,7 @@ extern "C" void app_main(void)
         g_fm.prompt_needs_text = true;
         g_fm.prompt_title = "Nome do novo arquivo (ex.: nota.txt):";
         g_fm.prompt_text = "";
+        g_fm.prompt_pos = g_fm.prompt_text.size();
         g_fm.prompt_action = "newfile";
         push_fm_ui();
     });
@@ -1154,6 +1381,7 @@ extern "C" void app_main(void)
         g_fm.prompt_needs_text = true;
         g_fm.prompt_title = "Nome do novo diretório:";
         g_fm.prompt_text = "";
+        g_fm.prompt_pos = g_fm.prompt_text.size();
         g_fm.prompt_action = "newdir";
         push_fm_ui();
     });
@@ -1208,7 +1436,7 @@ extern "C" void app_main(void)
                 log_line("[ok] arquivo substituído", NULL);
                 g_fm.prompt = false;
                 push_fm_ui();
-                ed_open_path_async(path);
+                ed_open_path_async(path, false);
                 return;
             }
             log_line("[erro] falha ao substituir", NULL);
@@ -1222,6 +1450,7 @@ extern "C" void app_main(void)
                     /* confirma antes de sobrescrever */
                     g_fm.prompt_title = "Já existe \"" + nt + "\". Substituir?";
                     g_fm.prompt_text = nt;
+                    g_fm.prompt_pos = g_fm.prompt_text.size();
                     g_fm.prompt_needs_text = false;
                     g_fm.prompt_action = "overwrite";
                     push_fm_ui();
@@ -1230,7 +1459,7 @@ extern "C" void app_main(void)
                     log_line("[ok] arquivo criado", NULL);
                     g_fm.prompt = false;
                     push_fm_ui();
-                    ed_open_path_async(path);   /* já abre p/ editar */
+                    ed_open_path_async(path, false);   /* já abre p/ editar */
                     return;
                 }
             }
@@ -1274,6 +1503,7 @@ extern "C" void app_main(void)
             g_fm.prompt_needs_text = true;
             g_fm.prompt_title = "Senha para \"" + g_wifi_pick_ssid + "\":";
             g_fm.prompt_text = "";
+            g_fm.prompt_pos = g_fm.prompt_text.size();
             g_fm.prompt_action = "wifipass";
             push_fm_ui();
         }
@@ -1306,13 +1536,29 @@ extern "C" void app_main(void)
         activity();
         std::string n(name.data());
         if (n.rfind("(nenhuma", 0) == 0) return;
-        ed_open_path_async(notes_dir() + "/" + n + ".txt");
+        /* display -> nome real (a lista stripa ".txt"; ".md"/".lua"/etc.
+         * aparecem com o nome cheio). */
+        std::string real;
+        for (const auto &r : s_notes_real) {
+            std::string d = r;
+            if (d.size() > 4 && d.compare(d.size() - 4, 4, ".txt") == 0)
+                d = d.substr(0, d.size() - 4);
+            if (d == n) { real = r; break; }
+        }
+        if (real.empty()) real = n + ".txt";   /* fallback: nota antiga */
+        if (!is_textish(real.c_str())) {
+            ESP_LOGW(TAG, "notas: formato não suportado, ignorando %s", real.c_str());
+            return;
+        }
+        size_t nl = real.size();
+        bool md = nl > 3 && strcasecmp(real.c_str() + nl - 3, ".md") == 0;
+        ed_open_path_async(path_join(notes_dir(), real), md);
     });
     ui->on_new_note([]() {
         activity();
         std::string name = generate_new_note_name();
         std::string path = notes_dir() + "/" + name + ".txt";
-        ed_load(path, "", true);
+        ed_load(path, "", true, false);
     });
 
     /* ---------- editor ---------- */
@@ -1324,6 +1570,7 @@ extern "C" void app_main(void)
     });
     ui->on_ed_tap_at([](float x, float y) {
         activity();
+        if (g_ed.reading) return;   /* leitura: toque só rola */
         /* fonte mono: linha e coluna direto do ponto tocado */
         int line = (int)((s_ed_top + y) / ED_LINE_H);
         int col = (int)((s_ed_left + x - 6) / ED_CHAR_W);
@@ -1348,18 +1595,41 @@ extern "C" void app_main(void)
     ui->on_ed_osk_key([](slint::SharedString k) {
         activity();
         std::string key(k.data());
+        if (g_ed.reading) return;   /* leitura: teclado não edita */
         if (g_fm.prompt && g_fm.prompt_needs_text) {
+            /* edição do campo com cursor real (M4.8): antes as teclas
+             * simbólicas caíam no else e eram anexadas LITERAIS
+             * ("SPACE" no lugar de espaço) e as setas não faziam nada. */
+            std::string &t = g_fm.prompt_text;
+            if (g_fm.prompt_pos > t.size()) g_fm.prompt_pos = t.size();
+            size_t &p = g_fm.prompt_pos;
             if (key == "BACKSPACE") {
-                if (!g_fm.prompt_text.empty()) g_fm.prompt_text.pop_back();
+                if (p > 0) { size_t q = utf8_prev(t, p); t.erase(q, p - q); p = q; }
+            } else if (key == "DEL") {
+                if (p < t.size()) { size_t q = utf8_next(t, p); t.erase(p, q - p); }
+            } else if (key == "LEFT") {
+                p = utf8_prev(t, p);
+            } else if (key == "RIGHT") {
+                p = utf8_next(t, p);
+            } else if (key == "HOME") {
+                p = 0;
+            } else if (key == "END") {
+                p = t.size();
             } else if (key == "ENTER") {
                 g_ui->invoke_fm_prompt_ok();
                 return;
-            } else if (key == "HIDE" || key == "MODE" || key == "LEFT" ||
-                       key == "RIGHT" || key == "UP" || key == "DOWN") {
-                if (key == "MODE") { g_ed.osk_mode = !g_ed.osk_mode; ed_push_osk_rows(); }
+            } else if (key == "MODE") {
+                g_ed.osk_mode = !g_ed.osk_mode;
+                ed_push_osk_rows();
                 return;
+            } else if (key == "HIDE" || key == "UP" || key == "DOWN") {
+                return;
+            } else if (key == "SPACE") {
+                t.insert(p, " ");
+                p += 1;
             } else {
-                g_fm.prompt_text += key;
+                t.insert(p, key);
+                p += key.size();
             }
             push_fm_ui();
             return;
@@ -1370,6 +1640,11 @@ extern "C" void app_main(void)
         activity();
         g_ed.osk_shift = s;
         ed_push_osk_rows();
+    });
+    ui->on_ed_toggle_mode([]() {
+        activity();
+        g_ed.reading = !g_ed.reading;
+        ed_push_ui(true);   /* volta p/ edição: rearma o piscar e mostra o cursor */
     });
     ui->on_ed_toggle_osk([]() {
         activity();
@@ -1415,6 +1690,7 @@ extern "C" void app_main(void)
                  (double)g_ui->get_cfg_off_s(), (double)g_ui->get_cfg_deep_s());
         pda_settings_update(&s);
         pda_config_save();
+        s_qs_dirty = false;   /* o save do painel de Config já persistiu o brilho */
         apply_brightness_from_settings();
         ed_push_ui(false);   /* osk_auto pode ter mudado */
         log_line("[config] salva em system.lua", NULL);
@@ -1428,6 +1704,19 @@ extern "C" void app_main(void)
         activity();
         power_mgmt_request_standby();
     });
+    ui->on_cfg_set_cursor([](slint::SharedString st) {
+        activity();
+        pda_settings_set("ui.cursor", 0, false, false, std::string(st.data()).c_str());
+        /* M4.11b: persiste NA HORA. Antes só ia para a RAM (s_dirty) e
+         * dependia do próximo "Salvar"; se o boot seguinte caísse na cura
+         * espelho/NVS, o cursor voltava ao default. */
+        pda_config_save();
+        s_qs_dirty = false;   /* save completo: brilho pendente do pulldown foi junto */
+        ESP_LOGI(TAG, "[config] cursor salvo: %s", pda_settings()->cursor_style);
+        slint::invoke_from_event_loop([]() {
+            if (g_ui->get_active_app() == AppState::Editor) ed_push_ui(false);
+        });
+    });
     ui->on_cfg_open_networks([]() {
         activity();
         nav_goto(AppState::Networks);
@@ -1437,11 +1726,31 @@ extern "C" void app_main(void)
         power_mgmt_hibernate();
     });
 
+    /* ---------- quick settings pulldown (M4.12) ---------- */
+    ui->on_qs_brightness([](float v) {
+        activity();
+        pda_settings_t s = *pda_settings();
+        if (s.brightness == (int)v) return;
+        s.brightness = (int)v;
+        pda_settings_update(&s);          /* RAM apenas — I/O só no fechamento */
+        apply_brightness_from_settings(); /* backlight ao vivo */
+        s_qs_dirty = true;
+    });
+    ui->on_qs_state([](bool open) {
+        activity();
+        if (!open && s_qs_dirty) {
+            s_qs_dirty = false;
+            pda_config_save();
+            ESP_LOGI(TAG, "[quick] brilho persistido: %d", pda_settings()->brightness);
+        }
+    });
+
     /* ---------- teclado USB ---------- */
     usb_hid_keyboard_init([](uint8_t ascii, uint8_t keycode, uint8_t /*mod*/) {
         slint::invoke_from_event_loop([ascii, keycode]() {
             activity();
             if (g_ui->get_active_app() != AppState::Editor) return;
+            if (g_ed.reading) return;
             switch (keycode) {
             case 0x4F: ed_move(1, 0, false, false); return;    // Right
             case 0x50: ed_move(-1, 0, false, false); return;   // Left
