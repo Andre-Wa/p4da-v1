@@ -94,7 +94,63 @@ Nada de M(n+1) começa com pendência de M(n).
       0x9000 intacto e SD intocado — cadeia ativo→espelho→NVS→defaults
       recupera as settings).
 
-## M4.12 — Gestos + pulldown de ajustes rápidos (FEITO; aguardando hardware)
+## M4.13 — Opt-out de gestos por tela, standby manual sticky e grade de pixel do cursor (FEITO; aguardando hardware)
+
+Rodada de feedback de 2026-10-02: M4.12 VALIDADO em hardware (gestos e
+pulldown ok), com três problemas/sugestões — todos diagnosticados com
+evidência no host ANTES de ir para a placa:
+
+- [x] **Opt-out de gestos por tela** (sugestão do usuário): propriedades
+      `back-swipe-allowed` / `qs-pull-allowed` no `app_ui.slint`. Telas que
+      gerenciam gestos próprios declaram `false` e a camada de gestos do app
+      SAI do hit-test — o mesmo efeito que o Launcher já tinha por ordem de
+      empilhamento. `AppState.Editor` (edição E leitura) opta por não ter o
+      back-swipe: a margem esquerda rola a caixa de texto e o voltar fica no
+      botão da toolbar. O pulldown segue global (a tira só cobre a status
+      bar, que não tem controles).
+- [x] **Botão "Suspender" não suspendia**: o pedido manual só zerava o
+      relógio de idle; a CAUDA de eventos de toque do MESMO tap no botão
+      (GT911 segue reportando por dezenas de ms após o release) religava o
+      relógio via `power_mgmt_activity()` e o pedido evaporava em silêncio
+      (log do usuário: pedido em t=568 s, `DIM (idle 5s)` em t=573 s — se o
+      zero tivesse sobrevivido, o idle logado seria ~568 s). Correção: flag
+      sticky `s_manual_standby` em `power_mgmt.c`, consumida só ao entrar em
+      standby; pedido → DIM em ≤200 ms → standby no tick seguinte; toque não
+      cancela mais o pedido (desistir = acordar de novo).
+- [x] **Cursor de bloco derivando no fim da linha**: o software renderer do
+      Slint 1.12 GRAVA o avanço do glifo na grade de pixels — pitch real
+      medido = `round(0.600em × fsize)` (sonda `fontpitch` do harness:
+      18px→11, 20px→12, 23px→14, min==max==média em 24 glifos idênticos;
+      sonda `coltest`: overlay do bloco na col 43 a −9 px do `|` in-flow na
+      mesma coluna). A fórmula antiga usava 0.6em fracionário (10.8 px) e
+      acumulava 0.2 px/char. Correção: `cell = Math.round(fsize/1px*6/10)*1px`
+      no `editor.slint` (MdRow + EditorScreen) e `ED_CHAR_W = 11.0f` no C++
+      (espelhos). Bar/under nunca derivaram porque são glifos embutidos no
+      texto. Efeito colateral bom: runs de palavra do modo leitura (MdRow)
+      agora casam EXATOS com o fluxo de glifos (antes havia drift invisível
+      de 0.2 px/char também lá).
+- [x] Evidência: `render_coltest.png` (bloco e `|` na mesma célula),
+      `render_fontpitch.png`, set completo re-renderizado
+      (reading/reading2/edit/prompt/panel/paneldrag); `md_test` 24/24 e
+      `hosttest` T1–T8 verdes; `slint-compiler` limpo.
+- [x] Ferramentas: `tools/render_offscreen.sh` renderiza 8 modos (inclui as
+      sondas `coltest`/`fontpitch`); `tools/ppm2png.py` novo (converte os
+      PPM do harness em PNG na raiz do repo).
+- [x] Sobre = "M4.13".
+- **Aceite HW**: no painel, "Suspender" escurece em ≤0.5 s e entra em
+  standby (`SUSPENDER: DIM imediato (pedido manual)` + `entrando em STANDBY
+  (idle robusto)` no log, sem DIM por idle antes); no editor, arrastar a
+  margem esquerda rola o texto (não volta) e o botão Voltar da toolbar
+  funciona; nas demais telas o back-swipe segue igual; cursor de bloco no
+  fim de uma linha longa (40+ colunas) cobre exatamente a célula do
+  caractere; com prompt aberto nada muda.
+- **Adiado p/ M4.14 (energia, a pedido do usuário)**: `power.wake_on_touch`
+  gatear de fato o wake por toque (hoje o ISR do INT acorda sempre — a
+  SwitchRow existe mas só segura o idle); standby mais profundo (pausar
+  reconexão Wi-Fi e NTP durante o standby); botão BOOT como wake (ISR já
+  instalado no init — validar na placa e conferir conflito de GPIO config).
+
+## M4.12 — Gestos + pulldown de ajustes rápidos (FEITO; ✅ VALIDADO EM HARDWARE 2026-10-02 — "Suspender" corrigido no M4.13)
 PRIORIDADES 1 e 5 do usuário (2026-09-30) entregues juntas, porque "pulldown
 É um gesto". Implementação 100% em Slint + 2 callbacks novos no C++
 (`qs-brightness`, `qs-state`); navegação do painel reusa callbacks existentes

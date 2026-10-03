@@ -62,7 +62,17 @@ ACTIVE ──idle>=dim_after_s──▶ DIM (backlight 12%)
 ```
 
 - `power_mgmt_activity()` é chamado por: teclas USB, callbacks de UI e (opcional)
-  toque. Em STANDBY a task fica bloqueada em `esp_light_sleep_start()`.
+  toque. Em STANDBY a task fica bloqueada em `esp_light_sleep_start()` (modo
+  light sleep) ou no semáforo de wake (modo idle robusto).
+- **Pedido manual de standby é STICKY (M4.13).** `power_mgmt_request_standby()`
+  (botão "Suspender" do painel) seta `s_manual_standby` + zera o idle; o
+  `power_task` escurece no próximo tick e entra em standby no seguinte
+  (≤0.5 s, sem esperar `dim_after_s`/`screen_off_after_s`). O flag NÃO é
+  cancelado por toque: antes ele só zerava o relógio de idle e a CAUDA de
+  eventos de toque do próprio tap no botão (GT911 reporta por dezenas de
+  ms após o release) religava o relógio — o pedido evaporava em silêncio
+  (log mostrava só "standby solicitado manualmente"). Flag consumido ao
+  acordar (`enter_standby`). Para desistir: acordar de novo.
 - Hibernar também é **manual** (tela Config → "Hibernar"), que é o "desligar"
   do PDA: sessão (tela + nota aberta) gravada em `<raiz>/.state/session.txt`.
 - Antes do deep sleep: `storage_shutdown_sd()` (unmount FatFS + LDO ch4 off)
@@ -76,6 +86,28 @@ ACTIVE ──idle>=dim_after_s──▶ DIM (backlight 12%)
 | `power.screen_off_after_s` | 120 | ocioso → STANDBY |
 | `power.deep_sleep_after_s` | 0 | em STANDBY, hiberna após N s (0 = nunca) |
 | `power.wake_on_touch` | false | [HW?] GPIO21 como wake; ligue após validar o pino |
+
+## M4.14 — rework de energia (aberto, fila pós-M4.13; feedback de 2026-10-02)
+
+Observações do hardware que viram tarefa aqui:
+
+1. **`power.wake_on_touch` não gateia o wake por toque de verdade.** O ISR
+   do INT (GPIO21) é instalado sempre em `power_mgmt_init()` e dá o
+   semáforo de wake em STANDBY; a chave hoje só entra no polling de idle
+   do `power_task`. Tarefa: com a chave OFF, desarmar o ISR/ignorá-lo no
+   wake (acidentes no bolso); com ON, comportamento atual. A SwitchRow já
+   existe em settings.slint ("Toque segura o idle / acorda").
+2. **STANDBY ainda "faz coisas".** No modo idle robusto a CPU segue viva:
+   Wi-Fi reconecta (log mostra `desconectado — reconectando em 2 s` DENTRO
+   do standby) e NTP atualiza. Tarefa: pausar reconexão automática e o
+   timer de NTP ao entrar, retomar no wake (`wifi_net_pause/resume`);
+   avaliar `host-power-save` do esp_hosted para modem-sleep do C6.
+3. **Botão BOOT como wake explícito.** O ISR de GPIO35 já é instalado no
+   init e dá o semáforo — validar na placa (e conferir se alguma
+   reconfiguração de GPIO posterior não mata o `intr_type`).
+
+Não são regressões do M4.13: são limites conhecidos do modo robusto
+(documentados desde M-power), agora com dono e fila.
 
 ## Plano de medição (próximo passo de hardware)
 

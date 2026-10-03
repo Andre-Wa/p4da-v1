@@ -23,6 +23,15 @@ static const char *TAG = "power_mgmt";
 
 static volatile int64_t s_last_activity_us = 0;
 static volatile pda_power_state_t s_state = PDA_PWR_ACTIVE;
+/* M4.13: pedido manual de standby PRECISA ser sticky. Antes a solicitação
+ * só zerava o relógio de idle — e a "cauda" de eventos de toque do MESMO
+ * tap no botão Suspender (o GT911 continua reportando por dezenas de ms
+ * após o release; cada evento chama power_mgmt_activity()) religava o
+ * relógio e o pedido evaporava em silêncio: o log mostrava "standby
+ * solicitado manualmente" seguido de um DIM normal por idle. O flag só é
+ * consumido ao entrar em standby; toque nenhum o cancela (quem pediu
+ * suspende; para desistir, acorda de novo). */
+static volatile bool s_manual_standby = false;
 static pda_power_standby_cb s_standby_cb = NULL;
 static void *s_standby_ctx = NULL;
 static pda_power_hibernate_save_cb s_hib_save_cb = NULL;
@@ -40,7 +49,7 @@ void power_mgmt_activity(void)
     if (s_state == PDA_PWR_STANDBY && s_wake_sem) {
         xSemaphoreGive(s_wake_sem);   /* modo idle: qualquer atividade acorda */
     }
-    if (s_state == PDA_PWR_DIM) {
+    if (s_state == PDA_PWR_DIM && !s_manual_standby) {
         s_state = PDA_PWR_ACTIVE;
         board_display_backlight_set((uint8_t)pda_settings()->brightness);
     }
@@ -51,7 +60,8 @@ pda_power_state_t power_mgmt_state(void) { return s_state; }
 void power_mgmt_request_standby(void)
 {
     ESP_LOGI(TAG, "standby solicitado manualmente");
-    s_last_activity_us = 0; /* idle "infinito" -> próximo tick dorme */
+    s_manual_standby = true;    /* sticky: sobrevive à cauda de toque do tap */
+    s_last_activity_us = 0;     /* idle "infinito" -> próximo tick dorme */
 }
 
 bool power_mgmt_woke_from_hibernate(void)
@@ -164,6 +174,7 @@ static void enter_standby(void)
     }
 
     /* ---- acordou ---- */
+    s_manual_standby = false;   /* M4.13: pedido consumido (manual ou idle) */
     s_state = PDA_PWR_ACTIVE;
     s_last_activity_us = esp_timer_get_time();
 
@@ -202,14 +213,22 @@ static void power_task(void *arg)
 
         switch (s_state) {
         case PDA_PWR_ACTIVE:
-            if (idle_s >= cfg->dim_after_s) {
+            if (s_manual_standby) {
+                /* M4.13: escurece já (feedback visual) e o próximo tick
+                 * entra em standby — sem esperar dim_after/screen_off. */
+                s_state = PDA_PWR_DIM;
+                board_display_backlight_set(12);
+                ESP_LOGI(TAG, "SUSPENDER: DIM imediato (pedido manual)");
+            } else if (idle_s >= cfg->dim_after_s) {
                 s_state = PDA_PWR_DIM;
                 board_display_backlight_set(12);
                 ESP_LOGI(TAG, "DIM (idle %lds)", (long)idle_s);
             }
             break;
         case PDA_PWR_DIM:
-            if (idle_s < cfg->dim_after_s) {
+            if (s_manual_standby) {
+                enter_standby(); /* bloqueia até acordar */
+            } else if (idle_s < cfg->dim_after_s) {
                 s_state = PDA_PWR_ACTIVE;
                 board_display_backlight_set((uint8_t)cfg->brightness);
             } else if (idle_s >= cfg->screen_off_after_s) {

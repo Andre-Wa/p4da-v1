@@ -3,7 +3,8 @@
 #
 # Compila main/ui/app_ui.slint com o slint-compiler 1.12.1 em modo
 # `embed-for-software-renderer`, linka com o Slint-cpp de Linux e renderiza
-# os 3 modos do harness (reading / edit / prompt) para PNG na raiz do repo.
+# os 8 modos do harness (reading, reading2, edit, prompt, panel, paneldrag,
+# coltest, fontpitch) para PNG na raiz do repo.
 #
 # Pré-requisitos no host (Linux x86_64):
 #   - slint-compiler 1.12.1   (release do GitHub, binário único)
@@ -43,7 +44,10 @@ g++ -std=c++20 -O1 -I"$SLINT_CPP/include/slint" -I"$REPO/main" -I. \
     -L"$SLINT_CPP/lib" -lslint_cpp -Wl,-rpath,"$SLINT_CPP/lib"
 
 echo "== render =="
-for mode in reading reading2 edit prompt; do
+# coltest/fontpitch = sondas M4.13 do pitch de glifo (drift do cursor-bloco):
+# coltest compara overlay vetorial vs glifo in-flow na col 43; fontpitch mede
+# o avanço real por (face,tamanho) com 24 'M' idênticos por estilo.
+for mode in reading reading2 edit prompt panel paneldrag coltest fontpitch; do
     ./harness "$mode"
     python3 - "$mode" "$REPO" <<'PY'
 import sys

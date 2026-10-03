@@ -141,6 +141,45 @@ int main(int argc, char **argv)
         ui->set_ed_osk_r3(mk({"z","x","c","v","b","n","m"}));
         lines = {"", "", ""};
         styles = {6, 6, 6};
+    } else if (mode == "fontpitch") {
+        // M4.13 sonda de pitch: 4 linhas de 24 'M' idênticos, um único run
+        // cada, nos estilos do modo leitura -> mede o avanço REAL do
+        // renderer por (face,tamanho): sty1 h1 bold23, sty2 h2 bold20,
+        // sty8 h3 bold18, sty7 parágrafo base18.
+        ui->set_ed_reading(true);
+        std::string ms(24, 'M');
+        lines = { slint::SharedString(ms), slint::SharedString(ms),
+                  slint::SharedString(ms), slint::SharedString(ms),
+                  slint::SharedString("") };
+        styles = { 1, 2, 8, 7, 9 };
+        auto runmodels =
+            std::make_shared<slint::VectorModel<std::shared_ptr<slint::Model<MdRun>>>>();
+        for (int i = 0; i < 5; i++) {
+            auto rm = std::make_shared<slint::VectorModel<MdRun>>();
+            if (i < 4) {
+                MdRun m;
+                m.text = slint::SharedString(ms);
+                m.col = 0;
+                m.kind = 0;
+                rm->push_back(m);
+            }
+            runmodels->push_back(rm);
+        }
+        ui->set_ed_runs(runmodels);
+    } else if (mode == "coltest") {
+        ui->set_ed_reading(false);
+        // M4.13 sonda de drift: linha 0 = 43 'M' + espaço com cursor BLOCK
+        // (overlay vetorial em x = 6 + col*cell); linha 1 = 43 'M' + "|"
+        // (glifo in-flow na MESMA coluna 43 — referência do renderer).
+        // Se o overlay e o "|" desalinharem, o pitch real do glifo != cell.
+        std::string ms(43, 'M');
+        lines = { slint::SharedString(ms + " "), slint::SharedString(ms + "|"),
+                  slint::SharedString(""), slint::SharedString("") };
+        styles = { 0, 0, 0, 0 };
+        ui->set_ed_cursor_row(0);
+        ui->set_ed_cursor_col(43);
+        ui->set_ed_cursor_on(true);
+        ui->set_ed_cursor_kind(2);
     } else {
         ui->set_ed_reading(false);
         // modo edição: linha 0 com cursor UNDER embutido (slot ocupado),

@@ -137,13 +137,29 @@ Ordem sugerida (respeitando as prioridades do usuário — gestos primeiro):
 4. F2 (app Android MVP) — fora do firmware; pode andar em paralelo
 5. F3/F4 quando o resto estiver estável
 
-## 7. Perguntas em aberto (para o usuário)
+## 7. Perguntas em aberto → DECIDIDO (feedback de 2026-10-02)
 
-- Nome do app e do dispositivo BLE (`p4da`? outro?).
-- Conflitos: padrão "manter os dois" está bom?
-- Quer sync de `scripts/` também ou só `notes/`?
-- QR na tela do PDA p/ pareamento (Slint renderiza QR? existe crate
-  `qrcode` p/ gerar bitmap — verificar charset de glifos NÃO é problema
-  aqui: QR seria desenhado como imagem, não texto).
-- Prioridade relativa vs. áudio (M5a USB-C) — o que vem primeiro depois
-  dos gestos?
+- **Nome do dispositivo BLE**: `PDA-P4`, editável depois (chave em
+  `system.lua`, ex.: `net.ble_name`, default `PDA-P4` — o nome do projeto,
+  `p4da`, é a junção). Nome do app: fica a critério do repo do app.
+- **Pareamento SEM QR/câmera no MVP.** QR exigiria permissão de câmera ou
+  intent externa no celular; decisão: o app descobre o PDA por **scan BLE**
+  (lista dispositivos `PDA-P4*`, toque pareia/bonda via GATT). QR fica como
+  opcional pós-MVP (F4), se um dia fizer sentido.
+- **Conexão/sync no MVP: BLE primeiro** (presença + controle + arquivos
+  pequenos), Wi‑Fi REST/WebDAV como canal de volume depois — o desenho de
+  dois canais (§1) se mantém, mas a ORDEM de implementação inverte: F3
+  (BLE) sobe para antes de F0/F1 no lado do app; o firmware já tem o
+  caminho BLE documentado em `docs/BLUETOOTH.md` (M4c).
+- **Escopo de arquivos internos**: `notas/`, `scripts/` e `config/`
+  (system.lua/wifi.lua). Conflitos: manter os dois (§3) confirmado como
+  padrão.
+- **Ordem geral**: sistema de áudio + player (M5) vem ANTES do app; como
+  tudo vive no cartão, o acesso manual cobre o intervalo. App fica em
+  M7/M8.
+- **Onde desenvolver o app**: repo + conversa SEPARADOS (decisão do
+  usuário). Este ambiente/sandbox NÃO é adequado p/ o app (sem Android
+  SDK/emulator/Gradle Android; o toolchain Android é pesado e o ciclo
+  emulator não fecha aqui) — o app nasce no Android Studio da máquina do
+  usuário; este lado mantém o CONTRATO (este doc) e os endpoints de
+  firmware (F0/F1/M4c) quando começarem.

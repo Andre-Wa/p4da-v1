@@ -109,11 +109,15 @@ o §5 explica o que ajustar.
 
 ## 5. Contratos e armadilhas (leia antes de trocar de fonte)
 
-1. **Avanço mono = 0.600em.** O editor desenha o cursor no SLOT do caractere:
-   `cell = Theme.type-body * 6 / 10` no `.slint` e `ED_CHAR_W = 10.8f` no
-   `main.cpp` assumem avanço 0.6em @ 18 px. Fonte com avanço diferente
-   desalinha cursor/coluna. (Ajuste os dois valores na proporção
-   `avanço_em * type-body` se um dia quiser outra métrica.)
+1. **Avanço mono = 0.600em NO ARQUIVO; célula efetiva = round(0.6em × fsize_px).**
+   O renderer Slint 1.12 grava o avanço do glifo na grade de pixels (medido
+   com a sonda `fontpitch` do harness: 18px→11.000, 20px→12.000, 23px→14.000,
+   min==max em todas as faces). Por isso o posicionamento por coluna usa a
+   célula INTEIRA: `cell = Math.round(fsize/1px * 6/10) * 1px` no `.slint`
+   (MdRow + EditorScreen) e `ED_CHAR_W = 11.0f` no `main.cpp` (M4.13). Com
+   10.8 fracionário o overlay do cursor-bloco derivava 0.2 px/col (≈9 px na
+   col 43). Fonte com avanço ≠ 0.600em desalinha tudo de novo: ajuste o
+   `verify_face` E os dois espelhos na proporção `round(avanço_em × fsize)`.
 2. **Ligaturas OFF por padrão.** Fira Code & cia. ligam `=>`, `->`, `!=` via
    `calt`; o Slint shapeia com rustybuzz, que aplica `calt` por padrão → nº de
    glifos < nº de chars → o cursor de slot desalinha no meio da linha. O
@@ -147,6 +151,13 @@ o §5 explica o que ajustar.
    1.12: dentro de um Text comprido, um espaço pode avançar 2 células e
    deslizar o resto da linha. Contrato do modo leitura: runs SEM espaço
    (parser quebra em palavras; vãos = células em branco por coluna).
+10. **Grade de pixel do renderer (M4.13).** Sonda de regressão:
+    `./harness fontpitch` (24 'M' idênticos por estilo h1/h2/h3/parágrafo →
+    pitch esperado round(0.6em×fsize), min==max) e `./harness coltest`
+    (overlay do cursor-bloco na col 43 vs `|` in-flow na mesma coluna →
+    mesma célula). Trocou de versão do Slint ou de fonte: rode as duas
+    antes de flashar. (Hipótese da causa: hinting grid-fit na rasterização;
+    o efeito é estável e agora é o contrato.)
 
 ## 6. Validação sem hardware (harness offscreen)
 

@@ -25,6 +25,17 @@ Backlog de refinamento de interface — sem pressa, entra entre milestones.
       `--italic-src` ao `tools/font_pipeline.py` (Roboto Mono Italic,
       Apache-2.0, ~40 KB subset) + terceira família no runtime.
 
+## Acrescentado em 2026-10-02
+- [x] Opt-out de gestos do app por tela: editor (edição+leitura) fica sem o
+      back-swipe da borda esquerda (margem rola o texto; voltar = botão da
+      toolbar) — M4.13 (`back-swipe-allowed`/`qs-pull-allowed` em app_ui.slint).
+- [x] Cursor de bloco alinhado à célula do caractere no fim da linha —
+      M4.13 (renderer grava avanço na grade de pixels; `cell` inteira).
+- [x] "Suspender" do painel entra em standby de verdade — M4.13 (pedido
+      sticky; antes a cauda de toque do tap cancelava em silêncio).
+- [ ] Energia: toggle de wake por toque gateando o ISR, standby mais
+      profundo (pausar Wi-Fi/NTP), botão BOOT como wake — fila M4.14.
+
 ## Acrescentado em 2026-09-28
 - [x] Gestos de navegação (swipe entre telas/voltar, swipe na status bar).
       **PRIORIDADE 1 do usuário (2026-09-30)** — feito no M4.12: arrasto da

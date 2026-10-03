@@ -57,8 +57,9 @@ static std::string s_session_app = "launcher";
 static std::string s_session_note = "";
 
 /* Geometria do editor — ESPELHA os tokens ESTÁTICOS do theme.slint
- * (line-h 28, osk-h 193, status-h 34, btn-h-sm 39, body 18px => avanço
- * mono 0.6em = 10.8px/char).
+ * (line-h 28, osk-h 193, status-h 34, btn-h-sm 39, body 18px => pitch
+ * mono 11px — o renderer grava o avanço na grade de pixels: round(0.6em);
+ * ver ED_CHAR_W e docs/UI.md "grade de pixel").
  * Modelo 100% estático: escala de UI se muda com tools/scale_type.py +
  * rebuild (o renderer pré-rasteriza fontes; e tokens mutáveis em runtime
  * já nos custaram um bootloop por NaN). Se mudar token lá, mude aqui.
@@ -70,7 +71,15 @@ static const float ED_LINE_H = 28.f;
 static const float ED_OSK_H = 193.f;
 static const float ED_STATUS_H = 34.f;
 static const float ED_BTN_SM = 39.f;
-static const float ED_CHAR_W = 10.8f;
+/* M4.13: o renderer Slint 1.12 grava o avanço do glifo na grade de pixels,
+ * então o pitch real é round(0.600em × font-size) e não 0.600em exato.
+ * Medido no harness offscreen (sonda "fontpitch"): 18px -> 11px, 20px -> 12px,
+ * 23px -> 14px, todos com min == max == média (pitch constante, sem drift).
+ * Com 10.8f o overlay do cursor-bloco derivava ~0.2px/col e chegava a 9px
+ * (quase uma célula) no fim da linha — visível só no cursor de bloco porque
+ * "|" e "_" são glifos embutidos no texto e acompanham o avanço real.
+ * Mantém em sincronia com `cell` em main/ui/screens/editor.slint. */
+static const float ED_CHAR_W = 11.0f;
 
 static void activity(void) { power_mgmt_activity(); }
 

@@ -169,6 +169,15 @@ scroll-do-cursor — se mudar um, mude o outro.
   (`cursor-row/col/on/kind`); `█` não existe em nenhuma fonte embutida.
 - Piscar: esp_timer 530 ms → `s_cursor_on` → `ed_push_ui(false)`; qualquer
   atividade de cursor rearma a fase aceso (`cursor_rearm`).
+- **Grade de pixel (M4.13)**: o software renderer 1.12 grava o avanço do
+  glifo na grade de pixels — pitch REAL = `round(0.600em × fsize)` (medido:
+  18px→11, 20px→12, 23px→14; sonda `fontpitch`). Todo posicionamento por
+  coluna usa essa célula inteira: `cell = Math.round(fsize/1px*6/10)*1px`
+  no .slint e `ED_CHAR_W = 11.0f` no C++ (ESPELHOS: se um mudar, o outro
+  muda). Com 10.8 fracionário o overlay do block derivava 0.2 px/col
+  (~9 px na col 43 — "espaço de outra letra"); bar/under nunca derivaram
+  por serem glifos in-flow. Sonda de regressão: modo `coltest` do harness
+  (bloco na col 43 vs `|` in-flow na mesma coluna → mesma célula).
 
 ### Fontes embutidas (M4.9 — família interna "PDA Mono", peso 400/700)
 - Faces: `Mono-Base.ttf` (wght 400 desde M4.9 — o 300 do M4.8 foi achado
@@ -185,8 +194,11 @@ scroll-do-cursor — se mudar um, mude o outro.
   removidos) — inclui a âncora Latin-1 de `app_ui.slint`, que garante
   acentos em texto de runtime; o pipeline FALHA se faltar glifo de char
   usado pela UI.
-- Avanço mono = 0.6em exato → `ED_CHAR_W` 10.8 px @ type-body 18 px casa
-  com a célula do editor (cursor de slot depende disso).
+- Avanço mono = 0.6em exato NO ARQUIVO da fonte; o renderer 1.12 grava o
+  avanço na grade de pixels, então a célula efetiva é
+  `round(0.6em × fsize_px)` (18px→11). Consumidores de coluna (MdRow,
+  cursor overlay, ED_CHAR_W, tap→col) usam a célula inteira — ver "grade
+  de pixel" em "Cursor do editor" e docs/FONTES.md (M4.13).
 - `■`/`█` não existem na Roboto Mono — botões de cursor do settings usam
   palavras (barra/traço/bloco) e o block-cursor é um Rectangle. (Fira Code
   tem ambos, mas o contrato de família fixa mantém a UI independente.)
@@ -211,7 +223,11 @@ Sem hardware dá para ver EXATAMENTE o que o device renderiza:
   `paneldrag` — estes últimos fixam `qs-dragging=true` + `qs-drag` em 192/110
   px, porque durante o drag a animação tem duração 0 ms e o frame único do
   harness mostra o estado exato do drag-following. Evidências:
-  `render_panel.png`, `render_paneldrag.png` na raiz.
+  `render_panel.png`, `render_paneldrag.png` na raiz. (M4.13) `coltest`
+  (overlay do cursor-bloco na col 43 vs `|` in-flow na mesma coluna —
+  regressão de alinhamento) e `fontpitch` (24 'M' idênticos por estilo
+  h1/h2/h3/parágrafo → mede o pitch real do renderer por face/tamanho).
+  `tools/ppm2png.py` converte os PPM em PNG na raiz.
 
 ## Gestos + pulldown de ajustes rápidos (M4.12)
 
@@ -230,6 +246,26 @@ Empilhamento (Slint: último declarado = topo do hit-test):
   (senha Wi-Fi, confirmação de save) nenhum gesto dispara.
 - Tira do topo declarada POR CIMA do painel com `enabled: !qs-open`: painel
   aberto, o hit-test desce para o grip do QuickPanel.
+
+### Opt-out de gestos por tela (M4.13)
+
+Nem toda tela quer os gestos do app: o editor rola a caixa de texto com
+arrasto (inclusive na margem esquerda) e tem botão Voltar próprio. O
+mecanismo é declarativo, em `app_ui.slint`:
+
+| Propriedade | Default | Efeito em `false` |
+|---|---|---|
+| `back-swipe-allowed` | `active-app != Launcher && != Editor` | tira da borda esquerda sai do hit-test (a tela vira dona do arrasto) |
+| `qs-pull-allowed` | `true` | tira do topo deixa de capturar o pulldown |
+
+- `in-out`: o harness/C++ podem forçar p/ teste; o binding reage a
+  `active-app` sozinho (trocou de tela, a política troca junto).
+- O Launcher "opta" por ordem de empilhamento (a camada dele vence o
+  hit-test) — mesmo efeito, mecanismo histórico.
+- Para uma tela nova optar por não ter back-swipe: acrescente a condição
+  no binding de `back-swipe-allowed` (ponto único, documentado aqui).
+- O pulldown continua GLOBAL de propósito: a tira cobre só a status bar
+  (34 px), que não tem controles — nenhuma toolbar de tela é roubada.
 - Scrim e painel ficam `visible: false` com altura ≤1 px (não roubam toque).
 - `qs-cur-h` anima (180 ms ease-out) só quando NÃO está arrastando
   (`animate { duration: qs-dragging ? 0ms : 180ms }`) — drag-following sem
