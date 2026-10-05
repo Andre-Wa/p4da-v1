@@ -63,6 +63,7 @@ static void apply_defaults(pda_settings_t *s)
     strlcpy(s->ntp_server, "pool.ntp.org", sizeof(s->ntp_server));
     s->onscreen_keyboard_auto = true;
     strlcpy(s->cursor_style, "bar", sizeof(s->cursor_style));
+    strlcpy(s->accent, "cyan", sizeof(s->accent));
 }
 
 /* ------------------------------------------------------------------ */
@@ -231,6 +232,9 @@ static esp_err_t parse_buffer(const char *name, const char *data, size_t len,
     if (lua_istable(L, -1)) {
         tmp.onscreen_keyboard_auto = tbl_bool(L, -1, "onscreen_keyboard_auto", tmp.onscreen_keyboard_auto);
         tbl_str(L, -1, "cursor", tmp.cursor_style, sizeof(tmp.cursor_style), tmp.cursor_style);
+        tbl_str(L, -1, "accent", tmp.accent, sizeof(tmp.accent), tmp.accent);
+        /* sanita M5.0: acento fora da lista vira cyan */
+        if (strcmp(tmp.accent,"cyan")&&strcmp(tmp.accent,"violet")&&strcmp(tmp.accent,"green")&&strcmp(tmp.accent,"amber")&&strcmp(tmp.accent,"pink")) strlcpy(tmp.accent,"cyan",sizeof(tmp.accent));
     } else {
         ESP_LOGW(TAG, "%s: seção 'ui' ausente (%s)", name,
                  lua_typename(L, lua_type(L, -1)));
@@ -393,7 +397,8 @@ static void nvs_shadow_save(const pda_settings_t *s)
     nvs_set_u8(h, "ls", s->light_sleep ? 1 : 0);
     nvs_set_str(h, "tz", s->timezone);
     nvs_set_str(h, "ntp", s->ntp_server);
-    nvs_set_str(h, "cursor", s->cursor_style);   /* M4.11b: sem isto a cura
+    nvs_set_str(h, "cursor", s->cursor_style);
+    nvs_set_str(h, "accent", s->accent);   /* M4.11b: sem isto a cura
                                                   * pelo NVS apagava o cursor */
     nvs_commit(h);
     nvs_close(h);
@@ -423,6 +428,9 @@ static bool nvs_shadow_load(pda_settings_t *s)
      * ausente -> mantém o valor corrente em vez de marcar a sombra inválida. */
     sz = sizeof(s->cursor_style);
     nvs_get_str(h, "cursor", s->cursor_style, &sz);
+    sz = sizeof(s->accent);
+    nvs_get_str(h, "accent", s->accent, &sz);
+    if (strcmp(s->accent,"cyan")&&strcmp(s->accent,"violet")&&strcmp(s->accent,"green")&&strcmp(s->accent,"amber")&&strcmp(s->accent,"pink")) strlcpy(s->accent,"cyan",sizeof(s->accent));
     nvs_close(h);
     return ok;
 }
@@ -454,6 +462,7 @@ static int serialize_buf(char *buf, size_t sz, const pda_settings_t *s)
         "  ui = {\n"
         "    onscreen_keyboard_auto = %s, -- teclado virtual so sem teclado USB\n"
         "    cursor = \"%s\",             -- cursor do editor: bar | under | block\n"
+        "    accent = \"%s\",             -- acento M3 Expressive: cyan|violet|green|amber|pink\n"
         "  },\n"
         "}\n",
         s->brightness,
@@ -463,7 +472,7 @@ static int serialize_buf(char *buf, size_t sz, const pda_settings_t *s)
         s->light_sleep ? "true" : "false",
         s->timezone, s->ntp_server,
         s->onscreen_keyboard_auto ? "true" : "false",
-        s->cursor_style);
+        s->cursor_style, s->accent);
     if (n <= 0 || (size_t)n >= sz) return -1;
     return n;
 }
@@ -504,20 +513,21 @@ static bool parser_selftest(const pda_settings_t *s)
               rt.onscreen_keyboard_auto == s->onscreen_keyboard_auto &&
               strcmp(rt.timezone, s->timezone) == 0 &&
               strcmp(rt.ntp_server, s->ntp_server) == 0 &&
-              strcmp(rt.cursor_style, s->cursor_style) == 0;
+              strcmp(rt.cursor_style, s->cursor_style) == 0 &&
+              strcmp(rt.accent, s->accent) == 0;
     if (!ok) {
         /* M4.11b: dizia só "FALHOU" — no boot de 2026-09-30 isso escondeu
          * que TODOS os numéricos voltavam INT_MAX (ABI LUA_32BITS). Loga os
          * dois lados: -12345 intacto = parse não leu; INT_MAX = ABI/float. */
         ESP_LOGE(TAG, "selftest DIVERGIU: veio br=%d dim=%d off=%d deep=%d "
-                 "wake=%d ls=%d osk=%d cursor=%s | esperado br=%d dim=%d "
-                 "off=%d deep=%d wake=%d ls=%d osk=%d cursor=%s",
+                 "wake=%d ls=%d osk=%d cursor=%s acc=%s | esperado br=%d dim=%d "
+                 "off=%d deep=%d wake=%d ls=%d osk=%d cursor=%s acc=%s",
                  rt.brightness, rt.dim_after_s, rt.screen_off_after_s,
                  rt.deep_sleep_after_s, rt.wake_on_touch, rt.light_sleep,
-                 rt.onscreen_keyboard_auto, rt.cursor_style,
+                 rt.onscreen_keyboard_auto, rt.cursor_style, rt.accent,
                  s->brightness, s->dim_after_s, s->screen_off_after_s,
                  s->deep_sleep_after_s, s->wake_on_touch, s->light_sleep,
-                 s->onscreen_keyboard_auto, s->cursor_style);
+                 s->onscreen_keyboard_auto, s->cursor_style, s->accent);
     }
     return ok;
 }
@@ -733,6 +743,7 @@ bool pda_settings_get(const char *key, double *out_num, bool *out_bool,
     if (!strcmp(key, "power.light_sleep")) { if (out_bool) *out_bool = s_cfg.light_sleep; return true; }
     if (!strcmp(key, "ui.onscreen_keyboard_auto")) { if (out_bool) *out_bool = s_cfg.onscreen_keyboard_auto; return true; }
     if (!strcmp(key, "ui.cursor")) { if (out_str) strlcpy(out_str, s_cfg.cursor_style, str_sz); return true; }
+    if (!strcmp(key, "ui.accent")) { if (out_str) strlcpy(out_str, s_cfg.accent, str_sz); return true; }
     if (!strcmp(key, "locale.timezone")) { if (out_str) strlcpy(out_str, s_cfg.timezone, str_sz); return true; }
     if (!strcmp(key, "locale.ntp_server")) { if (out_str) strlcpy(out_str, s_cfg.ntp_server, str_sz); return true; }
     return false;
@@ -749,6 +760,7 @@ bool pda_settings_set(const char *key, double num, bool is_bool, bool bool_val, 
     else if (!strcmp(key, "power.light_sleep")) { s_cfg.light_sleep = is_bool ? bool_val : (num != 0); }
     else if (!strcmp(key, "ui.onscreen_keyboard_auto")) { s_cfg.onscreen_keyboard_auto = is_bool ? bool_val : (num != 0); }
     else if (!strcmp(key, "ui.cursor")) { if (!str) return false; strlcpy(s_cfg.cursor_style, str, sizeof(s_cfg.cursor_style)); }
+    else if (!strcmp(key, "ui.accent")) { if (!str) return false; strlcpy(s_cfg.accent, str, sizeof(s_cfg.accent)); }
     else if (!strcmp(key, "locale.timezone")) { if (!str) return false; strlcpy(s_cfg.timezone, str, sizeof(s_cfg.timezone)); }
     else if (!strcmp(key, "locale.ntp_server")) { if (!str) return false; strlcpy(s_cfg.ntp_server, str, sizeof(s_cfg.ntp_server)); }
     else return false;

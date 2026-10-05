@@ -45,12 +45,12 @@ int main(int argc, char **argv)
     ui->window().show();
 
     std::string mode = argc > 1 ? argv[1] : "reading";
+    std::string out_mode = mode;   /* nome do arquivo ANTES dos remaps */
     bool scroll = false;
     if (mode == "reading2") { mode = "reading"; scroll = true; }
     // M4.12: painel pulldown aberto / meio arrastado. Renderizados via
     // qs-dragging=true + qs-drag fixo: durante o drag a duração da animação
     // é 0ms, então o frame único do harness mostra o estado exato.
-    std::string out_mode = mode;
     bool panel = false;
     float panel_h = 0.f;
     if (mode == "panel")     { panel = true; panel_h = 192.f; mode = "reading"; }
@@ -124,6 +124,25 @@ int main(int argc, char **argv)
             runmodels->push_back(rm);
         }
         ui->set_ed_runs(runmodels);
+    } else if (mode == "networks") {
+        /* M5.0b (A5): tela Redes com amostra p/ auditar layout Slint 1.12 */
+        ui->set_active_app(AppState::Networks);
+        auto mk = [](std::vector<std::string> v) {
+            auto m = std::make_shared<slint::VectorModel<slint::SharedString>>();
+            for (auto &x : v) m->push_back(slint::SharedString(x));
+            return m;
+        };
+        auto mb = [](std::vector<bool> v) {
+            auto m = std::make_shared<slint::VectorModel<bool>>();
+            for (bool x : v) m->push_back(x);
+            return m;
+        };
+        ui->set_net_ssids(mk({"Redstone F3", "Vizinhas-2G", "CafeAberto", "ssid_grande_paguemos_novamente"}));
+        ui->set_net_infos(mk({"-42 dBm", "-71 dBm", "-88 dBm", "-55 dBm"}));
+        ui->set_net_locked(mb({false, true, true, false}));
+        ui->set_net_current(slint::SharedString(""));
+        lines = { "", "", "" };
+        styles = { 9, 9, 9 };
     } else if (mode == "prompt") {
         ui->set_active_app(AppState::FileManager);
         ui->set_fm_prompt(true);

@@ -20,14 +20,18 @@ export global Theme {
     in property <color> outline: #333c4d;
     in property <color> outline-var: #232833;
 
-    // ---- cor de marca ----
-    in property <color> primary: #6fd3ff;
-    in property <color> on-primary: #003544;
-    in property <color> primary-container: #004d61;
-    in property <color> on-primary-container: #b8eaff;
-    in property <color> secondary-container: #3a4150;
-    in property <color> on-secondary-container: #d6e4ff;
-    in property <color> tertiary: #ffb77d;
+    // ---- cor de marca (M5.0 Expressive: cor dinâmica) ----
+    // Paleta escolhida pela string `accent` (setada pelo C++ via
+    // AppWindow.cfg-accent <=> Theme.accent): ternárias por paleta,
+    // tudo estático em compile-time (Slint 1.12 não expõe globals p/ C++).
+    in-out property <string> accent: "cyan";
+    out property <color> primary: accent == "violet" ? #b49dff : accent == "green" ? #8ce99a : accent == "amber" ? #ffca7a : accent == "pink" ? #ff9ecb : #6fd3ff;
+    out property <color> on-primary: accent == "violet" ? #2a1650 : accent == "green" ? #0f3d1c : accent == "amber" ? #4a2b00 : accent == "pink" ? #4d002b : #003544;
+    out property <color> primary-container: accent == "violet" ? #4a337a : accent == "green" ? #14532d : accent == "amber" ? #6b3f00 : accent == "pink" ? #7a0045 : #004d61;
+    out property <color> on-primary-container: accent == "violet" ? #e4d8ff : accent == "green" ? #c9f5d0 : accent == "amber" ? #ffe8c8 : accent == "pink" ? #ffd9e8 : #b8eaff;
+    out property <color> secondary-container: accent == "violet" ? #443a5e : accent == "green" ? #3a4a3e : accent == "amber" ? #4a4038 : accent == "pink" ? #4a3a44 : #3a4150;
+    out property <color> on-secondary-container: accent == "violet" ? #e8ddff : accent == "green" ? #d6f5dd : accent == "amber" ? #ffe4c0 : accent == "pink" ? #ffd9f0 : #d6e4ff;
+    out property <color> tertiary: accent == "violet" ? #9fe3a0 : accent == "green" ? #ffb77d : accent == "amber" ? #7ad0ff : accent == "pink" ? #9ee4ff : #ffb77d;
 
     // ---- semânticas ----
     in property <color> error: #ffb4ab;
@@ -43,11 +47,11 @@ export global Theme {
     in property <color> state-hover: #ffffff;
 
     // ---- forma (base x1.15) ----
-    in property <length> shape-xs: 5px;
-    in property <length> shape-sm: 9px;
-    in property <length> shape-md: 14px;
-    in property <length> shape-lg: 18px;
-    in property <length> shape-xl: 32px;
+    in property <length> shape-xs: 6px;
+    in property <length> shape-sm: 12px;
+    in property <length> shape-md: 18px;
+    in property <length> shape-lg: 24px;
+    in property <length> shape-xl: 40px;
 
     // ---- tipografia (ESTÁTICA de propósito!) ----
     // O software renderer pré-rasteriza os glifos no COMPILE para cada

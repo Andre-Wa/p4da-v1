@@ -74,6 +74,7 @@ export component SettingsScreen inherits Rectangle {
     callback hibernate();
     callback open-networks();
     callback set-cursor(string);
+    callback set-accent(string);
     callback go-back();
 
     HorizontalLayout {
@@ -173,6 +174,15 @@ export component SettingsScreen inherits Rectangle {
                     GhostButton { width: 76px; fsize: Theme.type-label; text: "traço"; clicked => { root.set-cursor("under"); } }
                     GhostButton { width: 76px; fsize: Theme.type-label; text: "bloco"; clicked => { root.set-cursor("block"); } }
                 }
+                HorizontalLayout {
+                    spacing: Theme.sp-sm;
+                    Text { text: "Acento:"; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
+                    GhostButton { width: 76px; fsize: Theme.type-label; text: "ciano"; clicked => { root.set-accent("cyan"); } }
+                    GhostButton { width: 76px; fsize: Theme.type-label; text: "violeta"; clicked => { root.set-accent("violet"); } }
+                    GhostButton { width: 76px; fsize: Theme.type-label; text: "verde"; clicked => { root.set-accent("green"); } }
+                    GhostButton { width: 76px; fsize: Theme.type-label; text: "âmbar"; clicked => { root.set-accent("amber"); } }
+                    GhostButton { width: 76px; fsize: Theme.type-label; text: "rosa"; clicked => { root.set-accent("pink"); } }
+                }
             }
 
             if root.tab == 3: VerticalLayout {
@@ -189,7 +199,7 @@ export component SettingsScreen inherits Rectangle {
 
             if root.tab == 4: VerticalLayout {
                 spacing: Theme.sp-sm;
-                Text { text: "PDA p4da — M4.16.2"; color: Theme.on-surface; font-size: Theme.type-title; font-weight: 700; }
+                Text { text: "PDA p4da — M5.0b"; color: Theme.on-surface; font-size: Theme.type-title; font-weight: 700; }
                 Text { text: "Placa: GUITION JC4880P443C_I_W (ESP32-P4 + C6)"; color: Theme.on-surface-var; font-size: Theme.type-label; }
                 Text { text: "IDF 5.5.1 · Slint 1.12.1 · Lua 5.5 · ESP-Hosted 2.12.9"; color: Theme.on-surface-var; font-size: Theme.type-label; }
                 Text { text: "Ícones: Material Icons (Apache-2.0) · Fonte: PDA Mono 400/700 (Apache-2.0)"; color: Theme.on-surface-var; font-size: Theme.type-label; wrap: word-wrap; }

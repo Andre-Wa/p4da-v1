@@ -76,6 +76,23 @@ static const char *wake_src_name(int src)
     }
 }
 
+/* M5.0b (A4): high-water-mark de pilhas p/ catching stack-creep sem
+ * debugger (histórico do projeto: ui_loop 8K→32K por fault). */
+static void log_hwm(const char *when)
+{
+    static const char *names[] = { "main", "ui_loop", "pda_power", "wifi_net",
+                                   "wifi_rcn", "io_edit", "io_list",
+                                   "io_notes", "io_scripts", "lua_script" };
+    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        TaskHandle_t h = xTaskGetHandle(names[i]);
+        if (h) {
+            ESP_LOGI(TAG, "hwm[%s] %s: %u B livres no mínimo",
+                     when, names[i],
+                     (unsigned)uxTaskGetStackHighWaterMark(h) * sizeof(StackType_t));
+        }
+    }
+}
+
 static void set_state(pda_power_state_t st, const char *why)
 {
     if (s_state == st) return;
@@ -238,6 +255,7 @@ static void enter_standby(const char *why)
              power_mgmt_light_sleep_active() ? "light sleep" : "idle robusto",
              s_touch_wake_ok ? "sim" : "nao");
 
+    log_hwm("standby");
     if (s_standby_cb) s_standby_cb(true, s_standby_ctx);
 
     board_display_backlight_set(0);
@@ -337,6 +355,12 @@ static void power_task(void *arg)
     s_last_activity_us = esp_timer_get_time();
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(200));
+        /* M5.0b (A4): amostra única 1 min após o boot. */
+        static bool hwm_boot = false;
+        if (!hwm_boot && esp_timer_get_time() > 60000000LL) {
+            hwm_boot = true;
+            log_hwm("boot+60s");
+        }
         const pda_settings_t *cfg = pda_settings();
         int64_t idle_s = (esp_timer_get_time() - s_last_activity_us) / 1000000LL;
 

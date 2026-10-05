@@ -225,8 +225,12 @@ export component EditorScreen inherits Rectangle {
             }
         }
 
-        if root.show-osk: OnScreenKeyboard {
-            height: Theme.osk-h;
+        /* M5.0 Expressive: OSK sempre montado, altura animada
+           (reveal clipado) — movimento M3E sem trocar layout. */
+        OnScreenKeyboard {
+            clip: true;
+            height: root.show-osk ? Theme.osk-h : 0px;
+            animate height { duration: 170ms; easing: ease-out; }
             r1: root.osk-r1;
             r2: root.osk-r2;
             r3: root.osk-r3;

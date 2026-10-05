@@ -1186,6 +1186,7 @@ static void push_settings_to_ui(void)
     g_ui->set_cfg_off_s((float)s->screen_off_after_s);
     g_ui->set_cfg_deep_s((float)s->deep_sleep_after_s);
     g_ui->set_cfg_wake_touch(s->wake_on_touch);
+    g_ui->set_cfg_accent(slint::SharedString(s->accent));
     g_ui->set_cfg_boot_standby(s->boot_btn_standby);
     g_ui->set_cfg_osk_auto(s->onscreen_keyboard_auto);
     g_ui->set_cfg_light_sleep(s->light_sleep);
@@ -1226,6 +1227,7 @@ extern "C" void app_main(void)
         nvs_flash_init();
     }
 
+    wifi_net_seed_clock();   /* M5.0b (A3): relógio plausível sem rede */
     board_storage_init();
     pda_config_init();
     lua_runtime_init();
@@ -1729,6 +1731,15 @@ extern "C" void app_main(void)
                  (double)g_ui->get_cfg_off_s(), (double)g_ui->get_cfg_deep_s());
         pda_settings_update(&s);
         pda_config_save();
+        /* M5.0b (A2): clamp_all pode ajustar (deep >= off+10 etc.);
+         * devolve os valores REAIS aos sliders p/ UI não mentir. */
+        {
+            const pda_settings_t *cs = pda_settings();
+            g_ui->set_cfg_brightness((float)cs->brightness);
+            g_ui->set_cfg_dim_s((float)cs->dim_after_s);
+            g_ui->set_cfg_off_s((float)cs->screen_off_after_s);
+            g_ui->set_cfg_deep_s((float)cs->deep_sleep_after_s);
+        }
         s_qs_dirty = false;   /* o save do painel de Config já persistiu o brilho */
         apply_brightness_from_settings();
         ed_push_ui(false);   /* osk_auto pode ter mudado */
@@ -1755,6 +1766,13 @@ extern "C" void app_main(void)
         slint::invoke_from_event_loop([]() {
             if (g_ui->get_active_app() == AppState::Editor) ed_push_ui(false);
         });
+    });
+    ui->on_cfg_set_accent([ui](slint::SharedString a) {
+        activity();
+        pda_settings_set("ui.accent", 0, false, false, std::string(a.data()).c_str());
+        pda_config_save();
+        ui->set_cfg_accent(slint::SharedString(pda_settings()->accent));
+        ESP_LOGI(TAG, "[config] acento salvo: %s", pda_settings()->accent);
     });
     ui->on_cfg_open_networks([]() {
         activity();

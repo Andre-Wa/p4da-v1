@@ -54,5 +54,8 @@ Backlog de refinamento de interface — sem pressa, entra entre milestones.
       (cobria tela); dígitos seguem no modo 123.
 - [x] OSK: repetição ao segurar (BACKSPACE/setas/espaço, 400ms+90ms) —
       FEITO M4.16.1 (sugestão do usuário na validação da M4.16).
-- [ ] M3 Expressive mais fiel (formas maiores, cor dinâmica, transições).
+- [x] M3 Expressive mais fiel — FEITO M5.0 (2026-10-05): cor dinâmica
+      (ui.accent, 5 paletas), formas maiores (shapes 6-40px, botões
+      pill), movimento (OSK animado 170ms; quick-panel já tinha drag).
+      Tipografia expressiva DEFERIDA (glifos por tamanho custam flash).
       **PRIORIDADE 4 do usuário (2026-09-30)** (itálico = 3, opcional).

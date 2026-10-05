@@ -344,7 +344,10 @@ Wishlist prioridade 2 do usuário (2026-09-30).
       botões em geometria ABSOLUTA (x/y/w/h explícitos) dentro do
       diálogo — imune ao bug de layout. Estreante: harness de render
       usado como juiz antes do hardware (pedido do usuário).
-- [x] Sobre = "M4.16.2".
+- [x] Sobre = "M4.16.2". ✅ VALIDADO EM HARDWARE 2026-10-05 (7ª rodada):
+      prompts de renomear/novo arq/novo dir/senha Wi-Fi/apagar com
+      OK/Cancelar visíveis e funcionais; repetição e taps ok. Wishlist
+      prio 2 FECHADA; itálico (prio 3) adiado por decisão do usuário.
 - **Aceite HW**: prompt de renomear/senha Wi-Fi mostra OK (filled) e
       Cancelar (ghost) acima do OSK; confirmação sem texto (apagar)
       idem centrada; OK confirma, Cancelar aborta; repetição e tap
@@ -620,6 +623,70 @@ toda a interface".
 - **Aceite**: hora certa após boot com Wi-Fi salvo; `pda.net.*` mínimo p/ scripts.
 
 ## M5 — Áudio & player de música
+
+### M5.0 — Passe M3 Expressive (FEITO; aguardando hardware; abre a M5 por pedido do usuário)
+Wishlist prioridade 4 (2026-09-30), escopo adaptado ao painel/fontes mono.
+
+- [x] **Cor dinâmica**: `ui.accent` (cyan|violet|green|amber|pink) em
+      system.lua + sombra NVS + seletor em Config → Tela (5 botões,
+      padrão do seletor de cursor). Paletas computadas em `theme.slint`
+      (ternárias sobre `Theme.accent`); propagação
+      `AppWindow.cfg-accent` → `init`/`changed` → `Theme.accent`.
+      Limitação documentada: Slint 1.12 NÃO expõe globals ao C++
+      (`global<Theme>()` não existe no código gerado) e o harness
+      offscreen não roda event loop → cor dinâmica é validável SÓ em
+      hardware; sanitize de valor inválido → cyan (hosttest cobre parse).
+- [x] **Formas maiores**: shape-xs/sm/md/lg/xl = 6/12/18/24/40 px
+      (botões viram pill, diálogos mais redondos).
+- [x] **Movimento**: OSK do editor sempre montado com altura animada
+      (170 ms ease-out, reveal clipado — sem trocar o layout que
+      encolhe o texto); quick-panel já tinha drag-following (M4.12).
+- [x] **Deferido**: tipografia expressiva (tamanhos novos de glifo
+      custam flash; a escala segue trocável offline via
+      `tools/scale_type.py`).
+- [x] Evidência offscreen: `render_edit.png`/`render_reading.png`
+      (formas pill, hierarquia md intacta, OSK height-0 sem phantom);
+      slint-compiler limpo, hosttest T1–T8, md_test 24/24.
+- [x] Sobre = "M5.0".
+- **Aceite HW**: Config → Tela → Acento: tocar violeta/verde/âmbar/rosa
+      recolore NA HORA (botões, status bar, cursor, containers); reboot
+      mantém (system.lua + NVS); `accent = "foo"` no cartão → cyan sem
+      crash; OSK abre/fecha com slide ~170 ms (sem pop); shapes novos
+      sem overflow em toolbar/prompt/painel/launcher.
+      ✅ VALIDADO EM HARDWARE 2026-10-05 (8ª rodada): 6/6 itens, incl.
+      recolor imediato, persistência no reboot e animação do OSK.
+
+### M5.0b — Quick wins da revisão pré-M5 (FEITO; aguardando hardware)
+Itens A1–A5 de `docs/REVIEW_PRE_M5.md`:
+
+- [x] **A1 backoff Wi-Fi não-bloqueante**: retry sai do event handler
+      (que bloqueava o event loop 2 s por retry) p/ task `wifi_rcn` com
+      notificação; escada 2/4/8/16/30 s; zera no GOT_IP e no resume;
+      re-checa pause/auth no fim do backoff. Reason de auth
+      (AUTH_FAIL/HANDSHAKE/4WAY) **suspende** o loop automático com
+      `AUTH_FAIL (reason N): senha errada?…` até ação em Redes
+      (`wifi_net_connect` religa).
+- [x] **A2 eco do clamp**: após save de Config, os valores REAIS
+      (clamp_all) voltam aos sliders (caso real: deep 40→66 invisível).
+- [x] **A3 seed de RTC**: último UTC bom persistido no NVS
+      (`pdawifi/last_utc`) a cada sync; `wifi_net_seed_clock()` no boot
+      (após nvs_flash_init) semeia settimeofday sem rede — mata mtime
+      FAT 1980 e relógio epocal; NTP refina depois.
+- [x] **A4 HWM de pilhas**: `hwm[boot+60s]`/`hwm[standby] <task>: N B
+      livres no mínimo` p/ main/ui_loop/pda_power/wifi_net/wifi_rcn/
+      io_*/lua_script (stack-creep sem debugger).
+- [x] **A5 tela Redes auditada**: modo `networks` novo no harness
+      offscreen (`render_networks.png`): lista/ícones/rssi/SSID longo ok,
+      botões pill; suspeita de layout Slint 1.12 em `networks.slint:56`
+      descartada no render. Validação HW = abrir a tela com scan real.
+- [x] Sobre = "M5.0b". Host: slint limpo, hosttest T1–T8, md_test 24/24.
+- **Aceite HW**: fora de casa, log mostra `reconexão em 2 s (backoff)` →
+      `4 s` → `8 s`… (não martelo fixo de 2 s) e NENHUM delay visível na
+      UI durante retries; senha errada propositais → linha AUTH_FAIL
+      única e silêncio até tocar em Redes; boot sem rede mostra hora
+      plausível (não 1970/uptime imediato) se já teve sync antes;
+      `hwm[...]` aparece ~60 s após boot e em cada standby; tela Redes
+      abre e lista como no render.
 - **Estado do hardware (relato do usuário, 2026-09-30)**: ele NÃO tem o
   conector de alto-falante da placa (mesmo tipo do conector de bateria) e
   falhou ao tentar fabricar um. Caminhos, em ordem de viabilidade:

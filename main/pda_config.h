@@ -28,7 +28,8 @@ typedef struct {
     char ntp_server[64];        /* uso futuro (fase Wi-Fi)            */
     /* ui */
     bool onscreen_keyboard_auto;
-    char cursor_style[8];           /* "bar" | "under" | "block" *//* teclado virtual só sem HID presente */
+    char cursor_style[8];           /* "bar" | "under" | "block" */
+    char accent[8];                 /* cyan|violet|green|amber|pink (M5.0) *//* teclado virtual só sem HID presente */
 } pda_settings_t;
 
 /** Carrega <raiz>/config/system.lua; se não existir, cria com defaults.

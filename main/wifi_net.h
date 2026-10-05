@@ -23,6 +23,10 @@ extern "C" {
 /** Sobe a pilha (nvs/netif/event/wifi) e conecta se auto_connect. */
 esp_err_t wifi_net_init(void);
 
+/** M5.0b (A3): semeia o relógio com o último UTC persistido no NVS
+ *  (chamar após nvs_flash_init, antes de writes que viram mtime). */
+void wifi_net_seed_clock(void);
+
 bool wifi_net_connected(void);
 bool wifi_net_clock_synced(void);
 

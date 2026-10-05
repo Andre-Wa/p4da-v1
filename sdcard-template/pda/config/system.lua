@@ -23,5 +23,6 @@ return {
 
   ui = {
     onscreen_keyboard_auto = true, -- teclado virtual aparece só sem teclado USB
+    accent = "cyan",               -- M5.0: cyan | violet | green | amber | pink
   },
 }

@@ -25,7 +25,7 @@ return {
 Chaves aceitas (as mesmas da API `pda.settings.*`):
 `display.brightness`, `power.dim_after_s`, `power.screen_off_after_s`,
 `power.deep_sleep_after_s`, `power.wake_on_touch`, `power.light_sleep`, `locale.timezone`,
-`locale.ntp_server`, `ui.onscreen_keyboard_auto`, `ui.cursor`
+`locale.ntp_server`, `ui.onscreen_keyboard_auto`, `ui.accent` (cyan|violet|green|amber|pink; sanitize p/ cyan), `ui.cursor`
 (`"bar"` | `"under"` | `"block"` — glifo do cursor do editor).
 
 ## 2. Pequenos programas — `scripts/*.lua`

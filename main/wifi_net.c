@@ -31,6 +31,11 @@ static bool s_auto = false;
 static bool s_connected = false;
 static bool s_synced = false;
 static volatile bool s_paused = false;   /* M4.14: standby pausa reconexão/NTP */
+/* M5.0b (A1): backoff exponencial em task própria — o event loop NÃO
+ * bloqueia mais 2 s por retry, e fora de casa o martelo vira 2/4/8/16/30 s. */
+static int s_backoff_s = 0;
+static bool s_auth_bad = false;          /* senha errada: para de retentar */
+static TaskHandle_t s_recon_task = NULL;
 static bool s_sntp_on = false;
 static char s_ssid[33] = { 0 };
 static char s_pass[65] = { 0 };
@@ -102,6 +107,14 @@ static void sntp_synced(struct timeval *tv)
 {
     (void)tv;
     s_synced = true;
+    /* M5.0b (A3): persiste o último UTC bom p/ semear o relógio no boot
+     * sem rede (mtime FAT 1980 / status bar sem HH:MM). */
+    nvs_handle_t h;
+    if (nvs_open("pdawifi", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u32(h, "last_utc", (uint32_t)time(NULL));
+        nvs_commit(h);
+        nvs_close(h);
+    }
     setenv("TZ", tz_for(pda_settings()->timezone), 1);
     tzset();
     ESP_LOGI(TAG, "hora sincronizada via NTP (TZ=%s)", pda_settings()->timezone);
@@ -121,7 +134,7 @@ static void sntp_start(void)
 
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
-    (void)arg; (void)data;
+    (void)arg;
     if (base != WIFI_EVENT) return;
     switch (id) {
     case WIFI_EVENT_STA_START:
@@ -139,18 +152,20 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
             ESP_LOGI(TAG, "desconectado em standby — reconexão pausada (M4.14)");
             break;
         }
-        if (s_auto) {
-            ESP_LOGI(TAG, "desconectado — reconectando em 2 s");
-            vTaskDelay(pdMS_TO_TICKS(2000));
-            /* M4.15: o standby pode ter começado DURANTE os 2 s (visto no
-             * log da senha errada: connect espúrio em pleno standby);
-             * re-checa antes de gastar rádio. */
-            if (s_paused) {
-                ESP_LOGI(TAG, "standby no meio do retry — reconexão pausada (M4.15)");
-                break;
-            }
-            esp_wifi_connect();
+        /* M5.0b (A1): reason de auth = senha errada provável: suspende o
+         * loop automático e avisa; só uma ação em Redes religa. */
+        const wifi_event_sta_disconnected_t *disc =
+            (const wifi_event_sta_disconnected_t *)data;
+        if (disc && (disc->reason == WIFI_REASON_AUTH_FAIL ||
+                     disc->reason == WIFI_REASON_HANDSHAKE_TIMEOUT ||
+                     disc->reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT)) {
+            s_auth_bad = true;
+            ESP_LOGW(TAG, "AUTH_FAIL (reason %d): senha errada? reconexão "
+                          "automática suspensa até nova ação em Redes",
+                     (int)disc->reason);
+            break;
         }
+        if (s_auto && s_recon_task) xTaskNotifyGive(s_recon_task);
         break;
     default:
         break;
@@ -163,6 +178,8 @@ static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         s_connected = true;
+        s_backoff_s = 0;      /* M5.0b: conectou zera backoff/auth */
+        s_auth_bad = false;
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&e->ip_info.ip));
         wifi_net_on_event_ui(true, wifi_net_rssi());
         if (!s_synced) sntp_start();
@@ -170,6 +187,22 @@ static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data
 }
 
 /* ---------------- task ---------------- */
+static void recon_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (!s_auto || s_paused || s_connected || s_auth_bad || !s_ssid[0])
+            continue;
+        s_backoff_s = s_backoff_s ? (s_backoff_s >= 30 ? 30 : s_backoff_s * 2) : 2;
+        ESP_LOGI(TAG, "desconectado — reconexão em %d s (backoff)", s_backoff_s);
+        vTaskDelay(pdMS_TO_TICKS((uint32_t)s_backoff_s * 1000U));
+        if (!s_auto || s_paused || s_connected || s_auth_bad || !s_ssid[0])
+            continue;   /* standby/auth no meio do backoff: não gasta rádio */
+        esp_wifi_connect();
+    }
+}
+
 static void wifi_task(void *arg)
 {
     (void)arg;
@@ -210,9 +243,24 @@ static void wifi_task(void *arg)
     vTaskDelete(NULL);
 }
 
+void wifi_net_seed_clock(void)
+{
+    nvs_handle_t h;
+    uint32_t v = 0;
+    if (nvs_open("pdawifi", NVS_READONLY, &h) != ESP_OK) return;
+    esp_err_t err = nvs_get_u32(h, "last_utc", &v);
+    nvs_close(h);
+    if (err != ESP_OK || v < 946684800U) return;      /* 2000-01-01 */
+    if (time(NULL) >= 946684800) return;              /* já plausível */
+    struct timeval tv = { (time_t)v, 0 };
+    settimeofday(&tv, NULL);
+    ESP_LOGI(TAG, "relógio semeado do NVS (ultimo UTC conhecido; NTP refina)");
+}
+
 esp_err_t wifi_net_init(void)
 {
     if (!load_wifi_lua()) return ESP_ERR_NOT_FOUND;
+    xTaskCreate(recon_task, "wifi_rcn", 4096, NULL, 3, &s_recon_task);
     BaseType_t ok = xTaskCreate(wifi_task, "wifi_net", 8192, NULL, 4, NULL);
     return (ok == pdPASS) ? ESP_OK : ESP_FAIL;
 }
@@ -246,6 +294,7 @@ void wifi_net_resume(void)
         esp_sntp_init();
         ESP_LOGI(TAG, "NTP retomado");
     }
+    s_backoff_s = 0;
     if (!s_connected && s_auto && s_ssid[0]) {
         ESP_LOGI(TAG, "Wi-Fi retomado do standby — reconectando");
         esp_wifi_connect();
@@ -342,6 +391,8 @@ esp_err_t wifi_net_connect(const char *ssid, const char *pass, bool save)
     snprintf(s_ssid, sizeof(s_ssid), "%s", ssid);
     snprintf(s_pass, sizeof(s_pass), "%s", pass);
     s_auto = true;
+    s_auth_bad = false;      /* M5.0b: ação do usuário religa o loop */
+    s_backoff_s = 0;
     if (save) wifi_net_save_config(ssid, pass);
 
     wifi_config_t cfg;
