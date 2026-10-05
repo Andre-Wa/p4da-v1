@@ -30,6 +30,8 @@ static const char *TAG = "wifi_net";
 static bool s_auto = false;
 static bool s_connected = false;
 static bool s_synced = false;
+static volatile bool s_paused = false;   /* M4.14: standby pausa reconexão/NTP */
+static bool s_sntp_on = false;
 static char s_ssid[33] = { 0 };
 static char s_pass[65] = { 0 };
 static char s_hhmm[8] = { 0 };
@@ -105,6 +107,18 @@ static void sntp_synced(struct timeval *tv)
     ESP_LOGI(TAG, "hora sincronizada via NTP (TZ=%s)", pda_settings()->timezone);
 }
 
+/* M4.14: fatorado p/ o pause/resume de standby. DEPOIS de sntp_synced:
+ * C exige declaração antes do uso — o build do usuário de 2026-10-04
+ * pegou esta função na frente da definição do callback. */
+static void sntp_start(void)
+{
+    /* IDF 5.5: API legacy do esp_sntp (sem config struct) */
+    esp_sntp_setservername(0, pda_settings()->ntp_server);
+    esp_sntp_set_time_sync_notification_cb(sntp_synced);
+    esp_sntp_init();
+    s_sntp_on = true;
+}
+
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg; (void)data;
@@ -118,6 +132,12 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         if (s_connected) {
             s_connected = false;
             wifi_net_on_event_ui(false, 0);
+        }
+        if (s_paused) {
+            /* M4.14: standby não fica martelando reconexão (C6 acordado
+             * à toa); o resume() reconecta ao acordar. */
+            ESP_LOGI(TAG, "desconectado em standby — reconexão pausada (M4.14)");
+            break;
         }
         if (s_auto) {
             ESP_LOGI(TAG, "desconectado — reconectando em 2 s");
@@ -138,12 +158,7 @@ static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data
         s_connected = true;
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&e->ip_info.ip));
         wifi_net_on_event_ui(true, wifi_net_rssi());
-        if (!s_synced) {
-            /* IDF 5.5: API legacy do esp_sntp (sem config struct) */
-            esp_sntp_setservername(0, pda_settings()->ntp_server);
-            esp_sntp_set_time_sync_notification_cb(sntp_synced);
-            esp_sntp_init();
-        }
+        if (!s_synced) sntp_start();
     }
 }
 
@@ -196,6 +211,41 @@ esp_err_t wifi_net_init(void)
 }
 
 const char *wifi_net_ssid(void) { return s_ssid; }
+
+/* ---------------- pausa de standby (M4.14) ----------------
+ * A associação Wi-Fi VIVE durante o standby robusto (CPU viva); o que
+ * pausa é o loop de reconexão e o poll do NTP — era o que logava
+ * "desconectado — reconectando em 2 s" DENTRO do standby. Modem-sleep
+ * do C6 (esp_hosted power save) é o próximo estágio (POWER_REWORK). */
+void wifi_net_pause(void)
+{
+    s_paused = true;
+    if (s_sntp_on) {
+        esp_sntp_stop();   /* assíncrono (tcpip_callback); entra na fila */
+        ESP_LOGI(TAG, "NTP pausado (standby)");
+    }
+    ESP_LOGI(TAG, "Wi-Fi pausado p/ standby (reconexão automática off)");
+}
+
+void wifi_net_resume(void)
+{
+    s_paused = false;
+    if (s_sntp_on) {
+        /* M4.14.2: sntp_restart() é NO-OP com o serviço parado (lwIP
+         * 5.5.1, sntp.c: só restarta se enabled — bug achado no log da
+         * validação: NTP morria após o 1º ciclo). esp_sntp_init() é o
+         * caminho de religar; servidores e cb sobrevivem ao stop. Não
+         * consultar esp_sntp_enabled(): é assíncrono e corre aqui. */
+        esp_sntp_init();
+        ESP_LOGI(TAG, "NTP retomado");
+    }
+    if (!s_connected && s_auto && s_ssid[0]) {
+        ESP_LOGI(TAG, "Wi-Fi retomado do standby — reconectando");
+        esp_wifi_connect();
+    } else {
+        ESP_LOGI(TAG, "Wi-Fi retomado do standby");
+    }
+}
 
 static void scan_task(void *arg)
 {

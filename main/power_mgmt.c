@@ -14,7 +14,9 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_sleep.h"
+#include "nvs.h"
 #include "driver/gpio.h"
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -32,6 +34,14 @@ static volatile pda_power_state_t s_state = PDA_PWR_ACTIVE;
  * consumido ao entrar em standby; toque nenhum o cancela (quem pediu
  * suspende; para desistir, acorda de novo). */
 static volatile bool s_manual_standby = false;
+/* M4.14 #1: o gate de wake por toque é decidido AO ENTRAR em standby (o
+ * config pode mudar em runtime; a ISR não pode ler pda_settings() com
+ * segurança). OFF = toque não acorda (acidentes no bolso); BOOT/USB sim. */
+static volatile bool s_touch_wake_ok = false;
+/* M4.14: proveniência do wake p/ log de aceite: 0 nenh. 1 boot 2 toque 3 ativ. */
+static volatile int s_wake_src = 0;
+/* M4.14.4: borda do botão BOOT p/ o toggle de standby (nível baixo = press.). */
+static volatile bool s_boot_was_down = false;
 static pda_power_standby_cb s_standby_cb = NULL;
 static void *s_standby_ctx = NULL;
 static pda_power_hibernate_save_cb s_hib_save_cb = NULL;
@@ -43,19 +53,60 @@ static SemaphoreHandle_t s_wake_sem = NULL;
 #endif
 
 /* ------------------------------------------------------------------ */
+/* M4.14 #4: instrumentação de transições. Toda escrita de s_state passa
+ * por set_state() com motivo; a anomalia "DIM (idle 21s/10s) logo após o
+ * NTP" dos logs de validação de 2026-10-04 vira diagnosticável: quem
+ * vira o estado deixa assinatura (motivo + idle no instante). */
+static const char *state_name(pda_power_state_t st)
+{
+    switch (st) {
+    case PDA_PWR_ACTIVE:   return "ACTIVE";
+    case PDA_PWR_DIM:      return "DIM";
+    default:               return "STANDBY";
+    }
+}
+
+static const char *wake_src_name(int src)
+{
+    switch (src) {
+    case 1:  return "botao BOOT";
+    case 2:  return "toque";
+    case 3:  return "atividade UI/USB";
+    default: return "?";
+    }
+}
+
+static void set_state(pda_power_state_t st, const char *why)
+{
+    if (s_state == st) return;
+    const int64_t idle_s = (esp_timer_get_time() - s_last_activity_us) / 1000000LL;
+    ESP_LOGI(TAG, "pwr: %s -> %s (%s, idle %lds)",
+             state_name(s_state), state_name(st), why, (long)idle_s);
+    s_state = st;
+}
+
+/* ------------------------------------------------------------------ */
 void power_mgmt_activity(void)
 {
     s_last_activity_us = esp_timer_get_time();
     if (s_state == PDA_PWR_STANDBY && s_wake_sem) {
+        s_wake_src = 3;
         xSemaphoreGive(s_wake_sem);   /* modo idle: qualquer atividade acorda */
     }
     if (s_state == PDA_PWR_DIM && !s_manual_standby) {
-        s_state = PDA_PWR_ACTIVE;
+        set_state(PDA_PWR_ACTIVE, "atividade UI/USB");
         board_display_backlight_set((uint8_t)pda_settings()->brightness);
     }
 }
 
 pda_power_state_t power_mgmt_state(void) { return s_state; }
+
+/* M4.14.3: STANDBY com wake_on_touch OFF = não entregar toque ao Slint
+ * (nem wake por callback de UI, nem action fantasma de elemento). */
+bool power_mgmt_touch_blind(void)
+{
+    return s_state == PDA_PWR_STANDBY && !s_touch_wake_ok;
+}
 
 void power_mgmt_request_standby(void)
 {
@@ -64,9 +115,51 @@ void power_mgmt_request_standby(void)
     s_last_activity_us = 0;     /* idle "infinito" -> próximo tick dorme */
 }
 
+/* M4.13b: o hibernate entra em deep sleep SEM wake source (a volta é
+ * RESET/power-on), então esp_reset_reason() NUNCA retorna
+ * ESP_RST_DEEPSLEEP nesta placa — a restauração de sessão virou código
+ * morto no M4.13 (relato do usuário na validação de 2026-10-04: "não
+ * restaura a tela ao apertar RESET"). Cura: flag em NVS gravado antes do
+ * deep sleep (flash interna: sobrevive a RESET, power-cycle e ao
+ * storage_shutdown_sd() que desmonta o SD logo depois) e consumido no
+ * primeiro boot que o encontrar. */
+#define PWR_NVS_NS "pdapwr"
+
+static void hibernate_flag_set(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(PWR_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGE(TAG, "HIBERNATE: NVS indisponível — sessão NÃO será restaurada");
+        return;
+    }
+    nvs_set_u8(h, "hib", 1);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+/* Consome o flag (apaga ao ler): um boot que não restaura não deixa o
+ * seguinte restaurar de novo. */
+static bool hibernate_flag_take(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(PWR_NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
+    uint8_t v = 0;
+    esp_err_t err = nvs_get_u8(h, "hib", &v);
+    nvs_close(h);
+    if (err != ESP_OK || v == 0) return false;
+    if (nvs_open(PWR_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_erase_key(h, "hib");
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    return true;
+}
+
 bool power_mgmt_woke_from_hibernate(void)
 {
-    return esp_reset_reason() == ESP_RST_DEEPSLEEP;
+    const bool flag = hibernate_flag_take();      /* consome se existir */
+    if (esp_reset_reason() == ESP_RST_DEEPSLEEP) return true;  /* wake futuro */
+    return flag;                                  /* M4.13b: RESET/power-on */
 }
 
 void power_mgmt_set_standby_cb(pda_power_standby_cb cb, void *ctx)
@@ -75,14 +168,17 @@ void power_mgmt_set_hibernate_save_cb(pda_power_hibernate_save_cb cb, void *ctx)
 { s_hib_save_cb = cb; s_hib_ctx = ctx; }
 
 /* ------------------------------------------------------------------ */
-static void enter_standby(void);
+static void enter_standby(const char *why);
 void power_mgmt_hibernate(void);
 
-/* Wake por GPIO no modo idle (sem light sleep): ISR dá o semáforo. */
+/* Wake por GPIO no modo idle (sem light sleep): ISR dá o semáforo.
+ * M4.14 #1: toque só acorda se a chave estava ON ao entrar no standby. */
 static void IRAM_ATTR wake_gpio_isr(void *arg)
 {
-    (void)arg;
+    const int pin = (int)(intptr_t)arg;
+    if (pin == BOARD_TOUCH_INT_GPIO && !s_touch_wake_ok) return;
     BaseType_t hw = pdFALSE;
+    s_wake_src = (pin == BOARD_TOUCH_INT_GPIO) ? 2 : 1;
     xSemaphoreGiveFromISR(s_wake_sem, &hw);
     if (hw) portYIELD_FROM_ISR();
 }
@@ -128,12 +224,15 @@ bool power_mgmt_light_sleep_active(void)
     return false;
 }
 
-static void enter_standby(void)
+static void enter_standby(const char *why)
 {
     const pda_settings_t *cfg = pda_settings();
-    s_state = PDA_PWR_STANDBY;
-    ESP_LOGI(TAG, "entrando em STANDBY (%s)",
-             power_mgmt_light_sleep_active() ? "light sleep" : "idle robusto");
+    s_touch_wake_ok = cfg->wake_on_touch;   /* M4.14 #1: gate da ISR de toque */
+    s_wake_src = 0;
+    set_state(PDA_PWR_STANDBY, why);
+    ESP_LOGI(TAG, "entrando em STANDBY (%s); wake armado: boot=sim touch=%s",
+             power_mgmt_light_sleep_active() ? "light sleep" : "idle robusto",
+             s_touch_wake_ok ? "sim" : "nao");
 
     if (s_standby_cb) s_standby_cb(true, s_standby_ctx);
 
@@ -175,19 +274,24 @@ static void enter_standby(void)
 
     /* ---- acordou ---- */
     s_manual_standby = false;   /* M4.13: pedido consumido (manual ou idle) */
-    s_state = PDA_PWR_ACTIVE;
     s_last_activity_us = esp_timer_get_time();
+    const char *wk = wake_src_name(s_wake_src);
+    s_wake_src = 0;
+    set_state(PDA_PWR_ACTIVE, wk);
 
     board_display_panel_blank(false);
     board_display_backlight_set((uint8_t)pda_settings()->brightness);
     if (s_standby_cb) s_standby_cb(false, s_standby_ctx);
-    ESP_LOGI(TAG, "acordou do STANDBY");
+    ESP_LOGI(TAG, "acordou do STANDBY (wake: %s)", wk);
 }
 
 void power_mgmt_hibernate(void)
 {
     ESP_LOGW(TAG, "HIBERNATE: salvando sessão e entrando em deep sleep");
     if (s_hib_save_cb) s_hib_save_cb(s_hib_ctx);
+    hibernate_flag_set();
+    ESP_LOGI(TAG, "HIBERNATE: flag NVS gravado — volta só por RESET/power-on "
+                  "(sessão será restaurada no boot)");
     board_display_backlight_set(0);
     storage_shutdown_sd();          /* unmount + LDO off: sem corrupção */
     esp_deep_sleep_start();         /* sem wake source: volta no power-on */
@@ -205,34 +309,51 @@ static void power_task(void *arg)
 
         /* Toque em área vazia não gera callback de UI (Slint só reporta
          * elementos interativos), então o INT do GT911 é pollado aqui:
-         * com wake_on_touch ligado, toque segura o idle/acorda. */
-        if (cfg->wake_on_touch &&
-            gpio_get_level(BOARD_TOUCH_INT_GPIO) == 0) {
+         * toque SEMPRE segura o idle e acorda de DIM; o wake do STANDBY
+         * por toque é gateado SÓ na ISR pela chave (M4.14.2: semântica
+         * pedida na validação — a chave desliga o wake, não a atividade). */
+        if (gpio_get_level(BOARD_TOUCH_INT_GPIO) == 0) {
             power_mgmt_activity();
         }
+
+        /* M4.14.4: BOOT como toggle p/ standby (opt-in por config): uma
+         * pressão NOVA em ACTIVE/DIM pede standby (mesmo caminho sticky
+         * do "Suspender"). Borda: pressão longa já em curso no boot
+         * (strapping) não dispara; só release+pressão. */
+        const bool boot_down = gpio_get_level(BOARD_BOOT_BTN_GPIO) == 0;
+        if (boot_down && !s_boot_was_down && cfg->boot_btn_standby) {
+            ESP_LOGI(TAG, "BOOT pressionado -> standby (opcao ligada)");
+            power_mgmt_request_standby();
+        }
+        s_boot_was_down = boot_down;
+
+        /* idle NOVO após os polls: activity() no meio do tick resetou o
+         * relógio; usar o valor do topo re-dimerizava no mesmo tick
+         * (churn DIM->ACTIVE->DIM visto no log de 2026-10-04). */
+        idle_s = (esp_timer_get_time() - s_last_activity_us) / 1000000LL;
 
         switch (s_state) {
         case PDA_PWR_ACTIVE:
             if (s_manual_standby) {
                 /* M4.13: escurece já (feedback visual) e o próximo tick
                  * entra em standby — sem esperar dim_after/screen_off. */
-                s_state = PDA_PWR_DIM;
+                set_state(PDA_PWR_DIM, "pedido manual (SUSPENDER)");
                 board_display_backlight_set(12);
                 ESP_LOGI(TAG, "SUSPENDER: DIM imediato (pedido manual)");
             } else if (idle_s >= cfg->dim_after_s) {
-                s_state = PDA_PWR_DIM;
+                set_state(PDA_PWR_DIM, "idle >= dim_after");
                 board_display_backlight_set(12);
                 ESP_LOGI(TAG, "DIM (idle %lds)", (long)idle_s);
             }
             break;
         case PDA_PWR_DIM:
             if (s_manual_standby) {
-                enter_standby(); /* bloqueia até acordar */
+                enter_standby("pedido manual"); /* bloqueia até acordar */
             } else if (idle_s < cfg->dim_after_s) {
-                s_state = PDA_PWR_ACTIVE;
+                set_state(PDA_PWR_ACTIVE, "idle voltou p/ < dim_after");
                 board_display_backlight_set((uint8_t)cfg->brightness);
             } else if (idle_s >= cfg->screen_off_after_s) {
-                enter_standby(); /* bloqueia até acordar */
+                enter_standby("idle >= screen_off"); /* bloqueia até acordar */
             }
             break;
         case PDA_PWR_STANDBY:
@@ -263,10 +384,15 @@ esp_err_t power_mgmt_init(void)
     gpio_config(&io);
 
     gpio_install_isr_service(0);
+    /* M4.14.4: se o BOOT já está pressionado no boot (strapping/flash),
+     * não contar como borda — só release+pressão nova pedem standby. */
+    s_boot_was_down = gpio_get_level(BOARD_BOOT_BTN_GPIO) == 0;
     gpio_set_intr_type(BOARD_BOOT_BTN_GPIO, GPIO_INTR_NEGEDGE);
-    gpio_isr_handler_add(BOARD_BOOT_BTN_GPIO, wake_gpio_isr, NULL);
+    gpio_isr_handler_add(BOARD_BOOT_BTN_GPIO, wake_gpio_isr,
+                         (void *)(intptr_t)BOARD_BOOT_BTN_GPIO);
     gpio_set_intr_type(BOARD_TOUCH_INT_GPIO, GPIO_INTR_NEGEDGE);
-    gpio_isr_handler_add(BOARD_TOUCH_INT_GPIO, wake_gpio_isr, NULL);
+    gpio_isr_handler_add(BOARD_TOUCH_INT_GPIO, wake_gpio_isr,
+                         (void *)(intptr_t)BOARD_TOUCH_INT_GPIO);
 
     BaseType_t ok = xTaskCreate(power_task, "pda_power", 6144, NULL, 5, NULL);
     return (ok == pdPASS) ? ESP_OK : ESP_FAIL;

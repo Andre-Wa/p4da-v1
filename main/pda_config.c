@@ -57,6 +57,7 @@ static void apply_defaults(pda_settings_t *s)
     s->screen_off_after_s = 120;
     s->deep_sleep_after_s = 600;
     s->wake_on_touch = false;
+    s->boot_btn_standby = false;   /* M4.14.4 */
     s->light_sleep = false;
     strlcpy(s->timezone, "America/Sao_Paulo", sizeof(s->timezone));
     strlcpy(s->ntp_server, "pool.ntp.org", sizeof(s->ntp_server));
@@ -206,6 +207,7 @@ static esp_err_t parse_buffer(const char *name, const char *data, size_t len,
         tmp.screen_off_after_s = tbl_int(L, -1, "screen_off_after_s", tmp.screen_off_after_s);
         tmp.deep_sleep_after_s = tbl_int(L, -1, "deep_sleep_after_s", tmp.deep_sleep_after_s);
         tmp.wake_on_touch = tbl_bool(L, -1, "wake_on_touch", tmp.wake_on_touch);
+        tmp.boot_btn_standby = tbl_bool(L, -1, "boot_btn_standby", tmp.boot_btn_standby);
         tmp.light_sleep = tbl_bool(L, -1, "light_sleep", tmp.light_sleep);
     } else {
         ESP_LOGW(TAG, "%s: seção 'power' ausente (%s)", name,
@@ -386,6 +388,7 @@ static void nvs_shadow_save(const pda_settings_t *s)
     nvs_set_i32(h, "off", s->screen_off_after_s);
     nvs_set_i32(h, "deep", s->deep_sleep_after_s);
     nvs_set_u8(h, "wake", s->wake_on_touch ? 1 : 0);
+    nvs_set_u8(h, "bbtn", s->boot_btn_standby ? 1 : 0);   /* M4.14.4 */
     nvs_set_u8(h, "osk", s->onscreen_keyboard_auto ? 1 : 0);
     nvs_set_u8(h, "ls", s->light_sleep ? 1 : 0);
     nvs_set_str(h, "tz", s->timezone);
@@ -409,6 +412,7 @@ static bool nvs_shadow_load(pda_settings_t *s)
     if (nvs_get_i32(h, "off", &v) == ESP_OK) s->screen_off_after_s = v; else ok = false;
     if (nvs_get_i32(h, "deep", &v) == ESP_OK) s->deep_sleep_after_s = v; else ok = false;
     if (nvs_get_u8(h, "wake", &b) == ESP_OK) s->wake_on_touch = b != 0;
+    if (nvs_get_u8(h, "bbtn", &b) == ESP_OK) s->boot_btn_standby = b != 0;
     if (nvs_get_u8(h, "osk", &b) == ESP_OK) s->onscreen_keyboard_auto = b != 0;
     if (nvs_get_u8(h, "ls", &b) == ESP_OK) s->light_sleep = b != 0;
     sz = sizeof(s->timezone);
@@ -440,6 +444,7 @@ static int serialize_buf(char *buf, size_t sz, const pda_settings_t *s)
         "    screen_off_after_s = %d,    -- degrau 2: tela off + light sleep\n"
         "    deep_sleep_after_s = %d,    -- degrau 3: deep sleep (restore do SD)\n"
         "    wake_on_touch = %s,    -- wake por touch (INT GT911)\n"
+        "    boot_btn_standby = %s, -- M4.14.4: BOOT em ACTIVE/DIM pede standby\n"
         "    light_sleep = %s,       -- true: light sleep no standby (exp.)\n"
         "  },\n"
         "  locale = {\n"
@@ -454,6 +459,7 @@ static int serialize_buf(char *buf, size_t sz, const pda_settings_t *s)
         s->brightness,
         s->dim_after_s, s->screen_off_after_s, s->deep_sleep_after_s,
         s->wake_on_touch ? "true" : "false",
+        s->boot_btn_standby ? "true" : "false",
         s->light_sleep ? "true" : "false",
         s->timezone, s->ntp_server,
         s->onscreen_keyboard_auto ? "true" : "false",

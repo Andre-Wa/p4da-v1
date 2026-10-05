@@ -13,6 +13,7 @@ return {
     screen_off_after_s = 120,   -- degrau 2: tela off + light sleep (wake: botão/toque)
     deep_sleep_after_s = 0,     -- degrau 3: hibernar após N s ocioso em standby (0 = nunca)
     wake_on_touch = false,      -- [HW?] usar INT do GT911 (GPIO21) como wake do standby
+    boot_btn_standby = false,   -- M4.14.4: pressionar BOOT em ACTIVE/DIM pede standby
   },
 
   locale = {

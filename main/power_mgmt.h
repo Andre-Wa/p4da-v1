@@ -47,13 +47,21 @@ void power_mgmt_activity(void);
 
 pda_power_state_t power_mgmt_state(void);
 
+/** M4.14.3: true em STANDBY com wake_on_touch OFF — o proxy do touch
+ *  (touch_init.c) entrega 0 pontos ao Slint enquanto cego (mata wake por
+ *  callback de UI e actions fantasmas de elementos com a tela off). */
+bool power_mgmt_touch_blind(void);
+
 /** "Dormir agora" (menu Config): força o próximo degrau = STANDBY. */
 void power_mgmt_request_standby(void);
 
 /** Hiberna agora: salva sessão, desmonta SD, deep sleep. */
 void power_mgmt_hibernate(void);
 
-/** true se este boot veio de um deep sleep (sessão a restaurar). */
+/** true se este boot deve restaurar a sessão de um hibernate.
+ *  M4.13b: consome o flag NVS gravado no hibernate — como o deep sleep
+ *  não tem wake source, a volta é RESET/power-on (ESP_RST_PIN/POWERON),
+ *  nunca ESP_RST_DEEPSLEEP; sem o flag a restauração era código morto. */
 bool power_mgmt_woke_from_hibernate(void);
 
 /** Kill-switch temporário do modo light sleep (ver docs/POWER.md):

@@ -94,7 +94,7 @@ Nada de M(n+1) começa com pendência de M(n).
       0x9000 intacto e SD intocado — cadeia ativo→espelho→NVS→defaults
       recupera as settings).
 
-## M4.13 — Opt-out de gestos por tela, standby manual sticky e grade de pixel do cursor (FEITO; aguardando hardware)
+## M4.13 — Opt-out de gestos por tela, standby manual sticky e grade de pixel do cursor (FEITO; ✅ VALIDADO EM HARDWARE 2026-10-04 — hibernate abriu o M4.13b)
 
 Rodada de feedback de 2026-10-02: M4.12 VALIDADO em hardware (gestos e
 pulldown ok), com três problemas/sugestões — todos diagnosticados com
@@ -149,6 +149,120 @@ evidência no host ANTES de ir para a placa:
   SwitchRow existe mas só segura o idle); standby mais profundo (pausar
   reconexão Wi-Fi e NTP durante o standby); botão BOOT como wake (ISR já
   instalado no init — validar na placa e conferir conflito de GPIO config).
+- **Validação 2026-10-04**: checklist completo verde (gestos, opt-out do
+  editor, cursor de bloco, Suspender sticky c/ assinatura de log exata,
+  OSK/prompt/brilho do painel) — exceto o item de hibernate, que virou o
+  M4.13b abaixo. Checklist preenchido fora do repo:
+  `validacoes/VALIDACAO_M4.13.md` (lista descartável por versão, não entra
+  no git por decisão do usuário).
+
+## M4.13b — Sessão do hibernate restaurada no RESET (FEITO; aguardando hardware)
+Bug achado NA validação do M4.13 (2026-10-04): "hibernar não restaura a
+tela ao apertar RESET e não existe outra forma de sair do hibernate".
+
+- [x] **Causa raiz (lida no código, não conjectura)**: `power_mgmt_hibernate()`
+      entra em deep sleep SEM wake source (volta = RESET/power-on, por
+      design — docs/POWER.md), mas `power_mgmt_woke_from_hibernate()`
+      exigia `esp_reset_reason() == ESP_RST_DEEPSLEEP`, causa que SÓ
+      ocorre em wake por wake source (inexistente). RESET gera
+      `ESP_RST_PIN`/`ESP_RST_POWERON` → `session_restore_if_needed()`
+      retornava na 1ª linha: restauração era código morto desde que o
+      wake source saiu (kill-switch M-power, 2026-09-24). A 2ª queixa do
+      relato é o design: deep sleep sem wake source só sai por
+      RESET/power-on (botão/toque NÃO acordam — documentado).
+- [x] **Cura**: flag `hib` em NVS (namespace novo `pdapwr`, flash interna:
+      sobrevive a RESET, power-cycle e ao `storage_shutdown_sd()` que
+      desmonta o SD logo depois) gravada antes do `esp_deep_sleep_start()`
+      e CONSUMIDA no primeiro boot que a achar (`hibernate_flag_set/take`,
+      apaga ao ler p/ um reboot comum não restaurar de novo).
+      `woke_from_hibernate()` = flag consumido OU `ESP_RST_DEEPSLEEP`
+      (porta aberta p/ wake sources futuros).
+- [x] Evidência por log: hibernate loga `HIBERNATE: flag NVS gravado —
+      volta só por RESET/power-on (sessão será restaurada no boot)`; o
+      boot pós-hibernação loga `boot pós-hibernação detectado (flag
+      NVS/reason)` + `restaurando sessão: app=.. note=..`; sem
+      session.txt legível loga `pós-hibernação sem session.txt legível`.
+- [x] Sobre = "M4.13b".
+- **Aceite HW**: abrir uma nota (ou Arquivos/Config), Config → Hibernar,
+      apertar RESET: boot mostra os logs acima e volta à MESMA tela/nota;
+      reboot comum SEM hibernate prévio NÃO restaura (flag consumido);
+      hibernate → power-cycle de bateria (se acessível) idem.
+- **Nota de 2026-10-04**: o log recebido do usuário ainda era do binário
+      v4.13 (compile time idêntico ao da validação) — o patch NUNCA foi
+      buildado; patch aplicável em `patches/M4.13b-hibernate.patch`
+      (workspace, fora do git). Usuário decidiu não bloquear nele: o
+      hibernate pode ser absorvido pelo Estágio 4 do rework de energia
+      (`docs/POWER_REWORK.md`), que também explica por que RESET não era
+      a saída esperada na bateria (corte do IP5306 → tecla BF2).
+
+## M4.14 — Standby profundo, wake honesto e transições assinadas (FEITO; aguardando hardware)
+Consome a fila de energia adiada no M4.13 (+ item 4, a anomalia dos logs
+de validação). Patch delta sobre v4.13+M4.13b:
+`patches/M4.14-energy.delta.patch` (workspace, fora do git).
+
+- [x] **#1 `power.wake_on_touch` gateia o wake por toque**: snapshot da
+      chave AO ENTRAR em standby (`s_touch_wake_ok`); com OFF a ISR do
+      GT911 não dá o semáforo de wake (acidentes de bolso morrem; BOOT e
+      USB seguem acordando). Log de entrada: `wake armado: boot=sim
+      touch=nao|sim`.
+- [x] **#2 Standby não reconecta Wi-Fi nem polla NTP**: `standby_cb`
+      chama `wifi_net_pause/resume` (wifi_net.c): handler de DISCONNECTED
+      com `s_paused` loga `desconectado em standby — reconexão pausada
+      (M4.14)` e não retenta; relógio via `esp_sntp_stop()`/
+      `sntp_restart()`. A associação VIVA é mantida de propósito
+      (modem-sleep do C6 = próximo estágio, `docs/POWER_REWORK.md`).
+      Wake: `Wi-Fi retomado do standby` (+ `— reconectando` se caído) e
+      `NTP retomado`.
+- [x] **#3 BOOT como wake**: ISR de GPIO35 já existia; conferido que nada
+      reconfigura o pino após o init (grep: só power_mgmt + board_config).
+      Ganhou proveniência no log; validação HW no checklist.
+- [x] **#4 Transições assinadas** (anomalia de 2026-10-04): toda escrita
+      de `s_state` passa por `set_state(st, why)` → `pwr: X -> Y (motivo,
+      idle Ns)`; wake loga a fonte (`acordou do STANDBY (wake: botao
+      BOOT|toque|atividade UI/USB)`). Se o "DIM (idle 21s) pós-NTP"
+      recorrer, o log nomeia o culpado — ou prova que não houve virada.
+- [x] Sobre = "M4.14". Host: slint-compiler limpo, hosttest T1–T8,
+      md_test 24/24.
+- [x] **Ajustes da validação (v4.14.2, 2026-10-04)**: (a) semântica da
+      chave separada — toque SEMPRE segura idle/acorda de DIM;
+      `wake_on_touch` gateia apenas o wake do STANDBY na ISR (rótulo novo:
+      "Toque acorda do STANDBY (INT GT911)"); trade-off aceito: toque no
+      bolso segura o idle durante ACTIVE/DIM; (b) resume do NTP:
+      `sntp_restart()` é no-op com o serviço parado (lwIP 5.5.1
+      sntp.c:123) → resume usa `esp_sntp_init()`; pause/resume não
+      consultam mais `esp_sntp_enabled()` (assíncrono, race); (c) BOOT não
+      acorda do HIBERNATE por design (deep sleep sem wake source; GPIO35 é
+      HP, wake de deep sleep só LP 0–15) — fica p/ o Estágio 4 do
+      POWER_REWORK (mod BF2→LP ou aceitar RESET/BF2 como power-on).
+- [x] **M4.14.3 (2ª rodada da validação)**: toque fantasma em elemento
+      interativo durante STANDBY com chave OFF — o toque chegava ao Slint
+      (a integração slint-esp polla o driver sozinha), o callback do
+      elemento RODAVA com a tela off (action fantasma: tocar onde estava
+      o Voltar navegava) e acordava por "atividade UI/USB". Cura: proxy em
+      `get_xy` do driver GT911 (`touch_init.c`): enquanto
+      `power_mgmt_touch_blind()` (STANDBY && chave OFF), o Slint recebe 0
+      pontos; `read_data` segue drenando o chip (sem flood de pontos
+      velhos no wake). Chave ON: comportamento inalterado (toque acorda e
+      o ponto que acordou atua, como antes).
+- [x] **M4.14.4 (pedido da 3ª rodada, 2026-10-04)**: botão BOOT como
+      toggle de standby — opt-in `power.boot_btn_standby` (SwitchRow
+      "Botão BOOT entra em STANDBY (toggle)" em Config → Entrada): pressão
+      NOVA em ACTIVE/DIM pede standby pelo mesmo caminho sticky do
+      "Suspender"; detecção de borda (pressão longa já em curso no boot/
+      strapping não dispara); em STANDBY o poll não roda (task bloqueada
+      no enter_standby), então o BOOT segue sendo só wake lá. No mesmo
+      commit: churn `DIM->ACTIVE->DIM` no mesmo tick (log de 2026-10-04,
+      t≈348,6 s) curado — `idle_s` é recalculado após os polls, pois
+      `power_mgmt_activity()` no meio do tick resetava o relógio e o
+      valor do topo ficava velho.
+- [x] Sobre = "M4.14.4".
+- [x] **Build-fix v4.14.1** (achado no build do usuário, 2026-10-04):
+      `sntp_start()` tinha sido inserida ANTES da definição de
+      `sntp_synced()` (undeclared no IDF gcc); ordem corrigida. Lição:
+      `wifi_net.c`/`power_mgmt.c` só compilam no build IDF — erro de
+      declaração/order em arquivos IDF-only escapa da suíte de host.
+- **Aceite HW**: `validacoes/VALIDACAO_M4.14.md` (fora do repo), que
+      inclui o reteste do hibernate M4.13b (presente neste binário).
 
 ## M4.12 — Gestos + pulldown de ajustes rápidos (FEITO; ✅ VALIDADO EM HARDWARE 2026-10-02 — "Suspender" corrigido no M4.13)
 PRIORIDADES 1 e 5 do usuário (2026-09-30) entregues juntas, porque "pulldown
@@ -484,6 +598,9 @@ toda a interface".
       Aguardando a vez na fila (gestos primeiro, prioridade do usuário).
 
 ## M-power (rework do light sleep) — ABERTO
+- Pesquisa completa + plano em estágios (0 medir → 1 software M4.14 →
+  2 painel → 3 light sleep → 4 hibernate v2) em `docs/POWER_REWORK.md`
+  (2026-10-04). Decisões em aberto listadas lá (§5).
 - O caminho `power.light_sleep` está atrás do kill-switch
   `power_mgmt_light_sleep_active()` (sempre false): no wake, o remount do
   SDMMC (periférico compartilhado com o SDIO do hosted) causou Instruction

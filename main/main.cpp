@@ -1118,10 +1118,14 @@ static void session_save(void *ctx)
 static void session_restore_if_needed(void)
 {
     if (!power_mgmt_woke_from_hibernate()) return;
+    ESP_LOGI(TAG, "boot pós-hibernação detectado (flag NVS/reason)");
     char path[160];
     pda_path(path, sizeof(path), ".state/session.txt");
     char *data = NULL; size_t len = 0;
-    if (storage_read_file_alloc(path, &data, &len) != ESP_OK) return;
+    if (storage_read_file_alloc(path, &data, &len) != ESP_OK) {
+        ESP_LOGW(TAG, "pós-hibernação sem session.txt legível — nada a restaurar");
+        return;
+    }
     std::string s(data, len);
     free(data);
 
@@ -1160,6 +1164,7 @@ static void push_settings_to_ui(void)
     g_ui->set_cfg_off_s((float)s->screen_off_after_s);
     g_ui->set_cfg_deep_s((float)s->deep_sleep_after_s);
     g_ui->set_cfg_wake_touch(s->wake_on_touch);
+    g_ui->set_cfg_boot_standby(s->boot_btn_standby);
     g_ui->set_cfg_osk_auto(s->onscreen_keyboard_auto);
     g_ui->set_cfg_light_sleep(s->light_sleep);
 
@@ -1692,6 +1697,7 @@ extern "C" void app_main(void)
         s.screen_off_after_s = (int)g_ui->get_cfg_off_s();
         s.deep_sleep_after_s = (int)g_ui->get_cfg_deep_s();
         s.wake_on_touch = g_ui->get_cfg_wake_touch();
+        s.boot_btn_standby = g_ui->get_cfg_boot_standby();
         s.onscreen_keyboard_auto = g_ui->get_cfg_osk_auto();
         s.light_sleep = g_ui->get_cfg_light_sleep();
         ESP_LOGI(TAG, "cfg-save UI: br=%f dim=%f off=%f deep=%f",
@@ -1794,9 +1800,11 @@ extern "C" void app_main(void)
          * derrubava USB e SD sem necessidade (log de 2026-09-25). */
         const bool ls = power_mgmt_light_sleep_active();
         if (entering) {
+            wifi_net_pause();   /* M4.14: standby não reconecta nem polla NTP */
             if (ls) usb_hid_keyboard_prepare_sleep();
             return;
         }
+        wifi_net_resume();      /* M4.14: reconecta/NTP volta ao acordar */
         if (ls) {
             storage_remount_sd();
             usb_hid_keyboard_resume();

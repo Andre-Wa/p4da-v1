@@ -133,6 +133,7 @@ export component AppWindow inherits Window {
     in-out property <float> cfg-off-s: 120;
     in-out property <float> cfg-deep-s: 0;
     in-out property <bool> cfg-wake-touch: false;
+    in-out property <bool> cfg-boot-standby: false;
     in-out property <bool> cfg-osk-auto: true;
     in-out property <bool> cfg-light-sleep: false;
     in property <string> cfg-store-info: "";
@@ -332,6 +333,7 @@ export component AppWindow inherits Window {
                 off-s <=> root.cfg-off-s;
                 deep-s <=> root.cfg-deep-s;
                 wake-touch <=> root.cfg-wake-touch;
+                boot-standby <=> root.cfg-boot-standby;
                 osk-auto <=> root.cfg-osk-auto;
                 light-sleep <=> root.cfg-light-sleep;
                 store-info: root.cfg-store-info;

@@ -75,6 +75,12 @@ ACTIVE ──idle>=dim_after_s──▶ DIM (backlight 12%)
   acordar (`enter_standby`). Para desistir: acordar de novo.
 - Hibernar também é **manual** (tela Config → "Hibernar"), que é o "desligar"
   do PDA: sessão (tela + nota aberta) gravada em `<raiz>/.state/session.txt`.
+  A volta é SÓ por RESET/power-on (deep sleep sem wake source, decisão
+  desta placa) — e desde o **M4.13b** o boot detecta esse retorno por um
+  flag NVS (`pdapwr/hib`, gravado antes do deep sleep e consumido ao
+  restaurar) e reabre a tela/nota da sessão. Sem o flag,
+  `ESP_RST_DEEPSLEEP` nunca ocorria (não há wake source) e a restauração
+  era código morto — bug achado na validação do M4.13 em 2026-10-04.
 - Antes do deep sleep: `storage_shutdown_sd()` (unmount FatFS + LDO ch4 off)
   para não corromper o cartão nem gastar o rail dele dormindo.
 
@@ -85,9 +91,10 @@ ACTIVE ──idle>=dim_after_s──▶ DIM (backlight 12%)
 | `power.dim_after_s` | 30 | ocioso → dimeriza |
 | `power.screen_off_after_s` | 120 | ocioso → STANDBY |
 | `power.deep_sleep_after_s` | 0 | em STANDBY, hiberna após N s (0 = nunca) |
-| `power.wake_on_touch` | false | [HW?] GPIO21 como wake; ligue após validar o pino |
+| `power.wake_on_touch` | false | gateia SÓ o wake por toque do STANDBY (ISR do GT911); toque como atividade (segurar idle, acordar de DIM) é SEMPRE ativo — semântica M4.14.2, pedida na validação. Com a chave OFF, em STANDBY o toque nem é entregue à UI (proxy `get_xy`, M4.14.3): sem wake por callback nem action fantasma de elemento |
+| `power.boot_btn_standby` | false | M4.14.4: pressão nova do BOOT em ACTIVE/DIM pede standby (toggle com o wake por BOOT, que é sempre armado) |
 
-## M4.14 — rework de energia (aberto, fila pós-M4.13; feedback de 2026-10-02)
+## M4.14 — rework de energia (IMPLEMENTADO 2026-10-04, aguardando hardware; checklist `validacoes/VALIDACAO_M4.14.md`)
 
 Observações do hardware que viram tarefa aqui:
 
@@ -97,14 +104,33 @@ Observações do hardware que viram tarefa aqui:
    do `power_task`. Tarefa: com a chave OFF, desarmar o ISR/ignorá-lo no
    wake (acidentes no bolso); com ON, comportamento atual. A SwitchRow já
    existe em settings.slint ("Toque segura o idle / acorda").
+   **FEITO M4.14**: snapshot da chave em `enter_standby()`
+   (`s_touch_wake_ok`); a ISR ignora toque com OFF. Proveniência do wake
+   no log (`acordou do STANDBY (wake: ...)`).
 2. **STANDBY ainda "faz coisas".** No modo idle robusto a CPU segue viva:
    Wi-Fi reconecta (log mostra `desconectado — reconectando em 2 s` DENTRO
    do standby) e NTP atualiza. Tarefa: pausar reconexão automática e o
    timer de NTP ao entrar, retomar no wake (`wifi_net_pause/resume`);
    avaliar `host-power-save` do esp_hosted para modem-sleep do C6.
+   **FEITO M4.14** (pause/resume via standby_cb; `esp_sntp_stop`/
+   `sntp_restart`); modem-sleep do C6 fica p/ o próximo estágio
+   (`docs/POWER_REWORK.md` §4).
 3. **Botão BOOT como wake explícito.** O ISR de GPIO35 já é instalado no
    init e dá o semáforo — validar na placa (e conferir se alguma
    reconfiguração de GPIO posterior não mata o `intr_type`).
+   **FEITO M4.14 (código)**: conferido por inspeção que nada reconfigura
+   GPIO35 após `power_mgmt_init()`; aceitação HW no checklist.
+4. **DIM com idle acumulado logo após o NTP** (log da validação de
+   2026-10-04): `DIM (idle 21s)` em t≈24,4 s, com `dim_after_s=5` e um
+   `DIM (idle 5s)` prévio em t≈7,6 s — uma transição ACTIVE→DIM com 21 s
+   de idle implica ou `power_task` ~16 s sem avaliar o estado (starvation
+   durante o burst hosted/NTP?) ou um wake DIM→ACTIVE que não resetou
+   `s_last_activity_us`. Cosmético no pior caso (blink de ~0,1 s na
+   sincronização do relógio); fechar com evidência adicionando log de
+   transição de estado (ACTIVE/DIM/STANDBY + causa) antes de mexer.
+   **INSTRUMENTADO M4.14**: `set_state(st, why)` loga toda transição com
+   motivo + idle; recorrência agora tem culpado nomeado. Medição segue
+   em aberto (sem correção de comportamento ainda, de propósito).
 
 Não são regressões do M4.13: são limites conhecidos do modo robusto
 (documentados desde M-power), agora com dono e fila.

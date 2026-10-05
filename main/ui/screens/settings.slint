@@ -61,6 +61,7 @@ export component SettingsScreen inherits Rectangle {
     in-out property <float> off-s: 120;
     in-out property <float> deep-s: 0;
     in-out property <bool> wake-touch: false;
+    in-out property <bool> boot-standby: false;
     in-out property <bool> osk-auto: true;
     in-out property <bool> light-sleep: false;
     in property <string> store-info;
@@ -160,7 +161,8 @@ export component SettingsScreen inherits Rectangle {
             if root.tab == 2: VerticalLayout {
                 spacing: Theme.sp-md;
                 SwitchRow { label: "Teclado virtual só sem USB"; value <=> root.osk-auto; }
-                SwitchRow { label: "Toque segura o idle / acorda (INT GT911)"; value <=> root.wake-touch; }
+                SwitchRow { label: "Toque acorda do STANDBY (INT GT911)"; value <=> root.wake-touch; }
+                SwitchRow { label: "Botão BOOT entra em STANDBY (toggle)"; value <=> root.boot-standby; }
                 SwitchRow { label: "Light sleep no standby (exp.: quebra SD/Wi-Fi/USB no wake)"; value <=> root.light-sleep; }
                 HorizontalLayout {
                     spacing: Theme.sp-sm;
@@ -187,7 +189,7 @@ export component SettingsScreen inherits Rectangle {
 
             if root.tab == 4: VerticalLayout {
                 spacing: Theme.sp-sm;
-                Text { text: "PDA p4da — M4.13"; color: Theme.on-surface; font-size: Theme.type-title; font-weight: 700; }
+                Text { text: "PDA p4da — M4.14.4"; color: Theme.on-surface; font-size: Theme.type-title; font-weight: 700; }
                 Text { text: "Placa: GUITION JC4880P443C_I_W (ESP32-P4 + C6)"; color: Theme.on-surface-var; font-size: Theme.type-label; }
                 Text { text: "IDF 5.5.1 · Slint 1.12.1 · Lua 5.5 · ESP-Hosted 2.12.9"; color: Theme.on-surface-var; font-size: Theme.type-label; }
                 Text { text: "Ícones: Material Icons (Apache-2.0) · Fonte: PDA Mono 400/700 (Apache-2.0)"; color: Theme.on-surface-var; font-size: Theme.type-label; wrap: word-wrap; }

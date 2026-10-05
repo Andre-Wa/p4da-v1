@@ -45,6 +45,12 @@ typedef struct {
  *  o rádio não ficar preso tentando a rede salva longe de casa). */
 void wifi_net_set_autoreconnect(bool on);
 
+/** Pausa/retoma p/ STANDBY (M4.14): congela o loop de reconexão e o poll
+ *  do NTP (esp_sntp_stop/sntp_restart); a associação viva é mantida.
+ *  Chamado pelo standby_cb do power_mgmt (entrando/saindo). */
+void wifi_net_pause(void);
+void wifi_net_resume(void);
+
 /** Scan bloqueante em task própria; cb chamado dessa task (hop p/ UI
  *  é responsabilidade do caller). count==0 se nada/erro. */
 typedef void (*wifi_net_scan_cb)(const wifi_net_ap_t *aps, int count, void *ctx);

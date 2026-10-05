@@ -8,6 +8,7 @@
 
 #include "touch_init.h"
 #include "board_config.h"
+#include "power_mgmt.h"
 
 #include "esp_log.h"
 #include "esp_check.h"
@@ -16,6 +17,28 @@
 #include "esp_lcd_panel_io.h"
 
 static const char *TAG = "touch_init";
+
+/* M4.14.3: cegueira de toque no STANDBY com wake_on_touch OFF. O caminho
+ * de wake pela ISR já era gateado (M4.14), mas o toque em ELEMENTO
+ * INTERATIVO chegava ao Slint (a integração slint-esp polla o driver por
+ * conta própria): o callback do elemento rodava com a tela "desligada"
+ * (action fantasma: ex.: tocar onde estava o Voltar navegava) e acordava
+ * por "atividade UI/USB" (relato + log da validação de 2026-10-04).
+ * Proxy em get_xy: read_data segue drenando o GT911 (sem flood de pontos
+ * velhos no wake), mas o Slint recebe 0 pontos enquanto cego. */
+static bool (*s_real_get_xy)(esp_lcd_touch_handle_t, uint16_t *, uint16_t *,
+                             uint16_t *, uint8_t *, uint8_t) = NULL;
+
+static bool blind_get_xy(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y,
+                         uint16_t *strength, uint8_t *point_num,
+                         uint8_t max_point_num)
+{
+    if (power_mgmt_touch_blind()) {
+        if (point_num) *point_num = 0;
+        return false;
+    }
+    return s_real_get_xy(tp, x, y, strength, point_num, max_point_num);
+}
 
 esp_err_t board_touch_init(esp_lcd_touch_handle_t *out_touch)
 {
@@ -70,6 +93,9 @@ esp_err_t board_touch_init(esp_lcd_touch_handle_t *out_touch)
 
     ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, out_touch),
                          TAG, "criar driver GT911");
+
+    s_real_get_xy = (*out_touch)->get_xy;   /* M4.14.3: proxy de cegueira */
+    (*out_touch)->get_xy = blind_get_xy;
 
     ESP_LOGI(TAG, "GT911 inicializado no I2C%d (SDA=%d SCL=%d)",
              BOARD_I2C_PORT, BOARD_I2C_SDA_GPIO, BOARD_I2C_SCL_GPIO);
