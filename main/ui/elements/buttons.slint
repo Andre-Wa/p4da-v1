@@ -149,7 +149,14 @@ export component KeyCap inherits Rectangle {
     in property <color> tint: Theme.surface-2;
     in property <color> fg: Theme.on-surface;
     in property <length> fsize: Theme.key-fsize;
+    /* M4.16.1: teclas repetíveis disparam no press (não no click), p/ o
+     * release não acrescentar um pulso extra após a repetição. */
+    in property <bool> fire-on-down: false;
     callback hit(string);
+    /* M4.16.1: bordas da pressão p/ repetição por segurar (o OSK decide
+     * quais códigos repetem). */
+    callback down(string);
+    callback up(string);
 
     border-radius: Theme.shape-sm;
     background: root.tint;
@@ -171,6 +178,17 @@ export component KeyCap inherits Rectangle {
         opacity: 10%;
     }
     ta := TouchArea {
-        clicked => { root.hit(root.code); }
+        clicked => { if (!root.fire-on-down) { root.hit(root.code); } }
+    }
+    /* M4.16.1: Slint 1.12 não tem callbacks pressed/released no
+     * TouchArea — espelhamos a propriedade e reagimos ao changed. */
+    property <bool> press-mirror: ta.pressed;
+    changed press-mirror => {
+        if (root.press-mirror) {
+            if (root.fire-on-down) { root.hit(root.code); }
+            root.down(root.code);
+        } else {
+            root.up(root.code);
+        }
     }
 }

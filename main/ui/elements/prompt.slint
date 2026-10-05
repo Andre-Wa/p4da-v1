@@ -36,9 +36,11 @@ export component PromptOverlay inherits Rectangle {
 
     Rectangle {
         x: Theme.sp-lg;
-        y: root.needs-text ? 40px : (parent.height - 150px) / 2;
+        y: root.needs-text ? 40px : (parent.height - 110px) / 2;
         width: parent.width - Theme.sp-lg * 2;
-        height: root.needs-text ? 120px : 150px;
+        // M4.16.2: 156 px com texto (título+campo+botões absolutos),
+        // 110 px sem (título+botões); fim em 196/225, acima do OSK (250).
+        height: root.needs-text ? 156px : 110px;
         background: Theme.surface-2;
         border-radius: Theme.shape-lg;
         border-width: 1px;
@@ -93,11 +95,20 @@ export component PromptOverlay inherits Rectangle {
                     }
                 }
             }
-            HorizontalLayout {
-                spacing: Theme.sp-sm;
-                FilledButton { text: "OK"; clicked => { root.ok(); } }
-                GhostButton { text: "Cancelar"; clicked => { root.cancel(); } }
-            }
+        }
+        /* M4.16.2: botões em geometria ABSOLUTA dentro do diálogo:
+           o VerticalLayout do Slint 1.12 misplaced esta fileira
+           p/ baixo do OSK quando ela vinha depois do campo
+           (provado por render offscreen: row no topo renderiza,
+           row após o campo não). x/y/w/h explícitos = imune. */
+        HorizontalLayout {
+            x: Theme.sp-md;
+            y: parent.height - Theme.btn-h - Theme.sp-md;
+            width: parent.width - Theme.sp-md * 2;
+            height: Theme.btn-h;
+            spacing: Theme.sp-sm;
+            FilledButton { horizontal-stretch: 1; text: "OK"; clicked => { root.ok(); } }
+            GhostButton { horizontal-stretch: 1; text: "Cancelar"; clicked => { root.cancel(); } }
         }
     }
 

@@ -156,7 +156,7 @@ evidência no host ANTES de ir para a placa:
   `validacoes/VALIDACAO_M4.13.md` (lista descartável por versão, não entra
   no git por decisão do usuário).
 
-## M4.13b — Sessão do hibernate restaurada no RESET (FEITO; aguardando hardware)
+## M4.13b — Sessão do hibernate restaurada no RESET (FEITO; ✅ VALIDADO EM HARDWARE 2026-10-05)
 Bug achado NA validação do M4.13 (2026-10-04): "hibernar não restaura a
 tela ao apertar RESET e não existe outra forma de sair do hibernate".
 
@@ -265,7 +265,7 @@ de validação). Patch delta sobre v4.13+M4.13b:
 - **Aceite HW**: `validacoes/VALIDACAO_M4.14.md` (fora do repo), que
       inclui o reteste do hibernate M4.13b (presente neste binário).
 
-## M4.15 — Estágio 1b: vizinhança dorme junto (FEITO; aguardando hardware)
+## M4.15 — Estágio 1b: vizinhança dorme junto (FEITO; ✅ VALIDADO EM HARDWARE 2026-10-05 — C6-off fica p/ hibernate v2)
 Consome parte do Estágio 1b de `docs/POWER_REWORK.md` com evidência na mão
 (issue esp-idf#18443; correntes do datasheet GT911). DFS/`esp_pm_configure`
 e teardown do painel seguem ADIADOS até o Estágio 0 (medição com
@@ -307,6 +307,58 @@ amperímetro): sem número, não se otimiza.
 - [x] Sobre = "M4.15.3". Host: slint-compiler limpo, hosttest T1–T8,
       md_test 24/24.
 - **Aceite HW**: `validacoes/VALIDACAO_M4.15.md` (lista também no chat).
+      ✅ Rodada 6 (2026-10-05): restore de Config/Notas/Arquivos/Scripts/
+      Redes sem crash (`sessão lida…` no bring-up → `restaurando sessão…`
+      no event loop); deep sleep limpo (sem banner WDT); BOOT longo não
+      cicla mais; loop de reconexão fora de casa = by design (backoff
+      vira candidato da revisão pré-M5).
+
+## M4.16 — OSK: alvos ≥48 px + fileira de números fixa (FEITO; aguardando hardware)
+Wishlist prioridade 2 do usuário (2026-09-30).
+
+- [x] Fileira de números FIXA (1–0) no topo, 40 px (fileira auxiliar); as
+      4 fileiras de baixo sobem p/ ≥48 px (`Theme.osk-h` 193→272 px).
+- [x] Mais espaçamento (5→6 px; padding 6→8 px) e teclas largas maiores:
+      setas/ok 44→56 px, SHIFT/BACKSPACE/MODE 64→76 px, enter 70→84 px.
+- [x] Prompt overlay sem colisão: campo em y 40–160 px; OSK começa em
+      y≈204 px (480−272−4).
+- [x] Sem mudança de charset (dígitos já embutidos desde o M4.8) → fontes
+      e partição intocadas.
+- [x] **M4.16.1 (feedback HW 2026-10-05)**: fileira de números fixa
+      REMOVIDA (cobria tela do editor; dígitos seguem no modo 123) —
+      osk-h 272→226 px, mantidos teclas ≥48 px e spacing 6 px (aprovados);
+      diálogo do prompt com texto 120→180 px p/ OK/Cancelar não sumirem
+      acima do OSK (y≈250); **repetição ao segurar** (sugestão do usuário):
+      BACKSPACE/setas/SPACE repetem após 400 ms e depois a cada 90 ms
+      (fire-on-down nas repetíveis; release não acrescenta pulso);
+      TouchArea 1.12 não tem pressed/released → property-espelho +
+      `changed`, e Timer se controla por `running` (`triggered` é o cb).
+- [x] Sobre = "M4.16.1"; slint-compiler limpo.
+- [x] **M4.16.2 (feedback HW + render offscreen, 2026-10-05)**: botões
+      OK/Cancelar do prompt REALMENTE visíveis. Causa raiz (provada por
+      bisseção com `render_prompt.png`): no Slint 1.12, uma fileira
+      colocada DEPOIS de um irmão de altura fixa dentro do
+      VerticalLayout do diálogo era mispositioned para fora do diálogo
+      (sob o OSK, z-order maior); com a row no TOPO do layout, renderiza.
+      Cura: diálogo compacto (156 px c/ texto, 110 px sem) e row de
+      botões em geometria ABSOLUTA (x/y/w/h explícitos) dentro do
+      diálogo — imune ao bug de layout. Estreante: harness de render
+      usado como juiz antes do hardware (pedido do usuário).
+- [x] Sobre = "M4.16.2".
+- **Aceite HW**: prompt de renomear/senha Wi-Fi mostra OK (filled) e
+      Cancelar (ghost) acima do OSK; confirmação sem texto (apagar)
+      idem centrada; OK confirma, Cancelar aborta; repetição e tap
+      simples seguem ok. Cobre também o aceite da M4.16.1 (teclas
+      maiores, repetição, espaço do editor), cujo item 3 (prompt) era
+      este bug.
+- **Fila da revisão pré-M5**: auditar outros layouts com irmãos de
+      altura fixa + condicionais (mesma família de bug); eco do clamp
+      no slider; backoff Wi-Fi fora de casa; mtime/RTC sem NTP.
+- **Itálico (wishlist prio 3)**: ADIADO por decisão do usuário
+      (2026-10-05: "não é prioridade agora; se fácil, no fim da
+      versão") — e NÃO é fácil (pipeline de fonte + 3ª família + kinds
+      no md_render + runs no editor + orçamento de flash); fica p/ a
+      versão seguinte, não entra por debaixo do tapete.
 
 ## M4.12 — Gestos + pulldown de ajustes rápidos (FEITO; ✅ VALIDADO EM HARDWARE 2026-10-02 — "Suspender" corrigido no M4.13)
 PRIORIDADES 1 e 5 do usuário (2026-09-30) entregues juntas, porque "pulldown
