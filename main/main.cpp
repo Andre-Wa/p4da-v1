@@ -1537,6 +1537,12 @@ extern "C" void app_main(void)
             snprintf(msg, sizeof(msg), "[wifi] conectando em \"%s\" (aberta)", ap.ssid);
             log_line(msg, NULL);
             wifi_net_connect(ap.ssid, "", true);
+        } else if (const char *sp = wifi_net_saved_pass(ap.ssid)) {
+            /* M5.2: rede já salva conecta direto, sem prompt. */
+            char msg[160];
+            snprintf(msg, sizeof(msg), "[wifi] conectando em \"%s\" (senha salva)", ap.ssid);
+            log_line(msg, NULL);
+            wifi_net_connect(ap.ssid, sp, false);
         } else {
             g_wifi_pick_ssid = ap.ssid;
             g_fm.prompt = true;

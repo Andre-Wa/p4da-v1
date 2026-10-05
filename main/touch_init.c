@@ -11,6 +11,8 @@
 #include "power_mgmt.h"
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_check.h"
 #include "driver/i2c_master.h"
 #include "esp_lcd_touch_gt911.h"
@@ -101,8 +103,19 @@ esp_err_t board_touch_init(esp_lcd_touch_handle_t *out_touch)
         },
     };
 
-    ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, out_touch),
-                         TAG, "criar driver GT911");
+    /* M5.1.1: o GT911 às vezes nasce mudo (NACK no 1º I2C do boot, visto
+     * no crash-report de 2026-10-05 após warm reset): retries com pausa
+     * e reset do bus antes de declarar fatal (ESP_ERROR_CHECK no main). */
+    esp_err_t terr = ESP_FAIL;
+    for (int attempt = 1; attempt <= 5; attempt++) {
+        terr = esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, out_touch);
+        if (terr == ESP_OK) break;
+        ESP_LOGW(TAG, "GT911 tentativa %d/5 falhou (%s); retry em 80 ms",
+                 attempt, esp_err_to_name(terr));
+        vTaskDelay(pdMS_TO_TICKS(80));
+        if (attempt >= 3) i2c_master_bus_reset(bus_handle);
+    }
+    ESP_RETURN_ON_ERROR(terr, TAG, "criar driver GT911");
 
     s_real_get_xy = (*out_touch)->get_xy;   /* M4.14.3: proxy de cegueira */
     (*out_touch)->get_xy = blind_get_xy;

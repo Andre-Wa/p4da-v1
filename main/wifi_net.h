@@ -39,6 +39,9 @@ int wifi_net_rssi(void);
 /** SSID atual (configurado), nunca NULL. */
 const char *wifi_net_ssid(void);
 
+/** M5.2: senha salva p/ o ssid (NULL se não salvo) — UI conecta direto. */
+const char *wifi_net_saved_pass(const char *ssid);
+
 typedef struct {
     char ssid[33];
     int  rssi;

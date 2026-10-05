@@ -680,6 +680,35 @@ Itens A1–A5 de `docs/REVIEW_PRE_M5.md`:
       botões pill; suspeita de layout Slint 1.12 em `networks.slint:56`
       descartada no render. Validação HW = abrir a tela com scan real.
 - [x] Sobre = "M5.0b". Host: slint limpo, hosttest T1–T8, md_test 24/24.
+- **Validação 9ª rodada (2026-10-05), parcial**: A1 backoff observado
+  (com o dente 32→30, corrigido no v5.2 p/ min(2x,30)); AUTH_FAIL
+  suspende certeiro (reason 202); A3 `relógio semeado do NVS` no boot
+  sem rede; A4 linhas `hwm[boot+60s]` presentes (ui_loop 25040 B livres,
+  pda_power 4308, wifi_rcn 3784 — baseline); A2/A5 pendentes desta
+  rodada. Crash reportado era o GT911 mudo no boot → M5.1.1 abaixo.
+
+### M5.1.1 — GT911 retry no boot (FEITO; aguardando hardware)
+- [x] Crash de 2026-10-05: warm reset → GT911 NACK no 1º I2C →
+      `ESP_ERROR_CHECK(board_touch_init)` abortava o boot. Agora
+      `board_touch_init` tenta 5× (80 ms entre; `i2c_master_bus_reset`
+      a partir da 3ª) antes de falhar fatal.
+
+### M5.2 — Multi-redes salvas (FEITO; aguardando hardware)
+- [x] `config/wifi.lua` com lista `networks = { {ssid,password}, … }`
+      (máx. 8; legado de ssid único ainda lido); serialização da lista
+      no save; upsert ao conectar pela tela.
+- [x] Rotação por reason: NO_AP_FOUND marca `noap` e gira; AUTH_FAIL
+      marca `bad` e gira; todas bad → suspensão com log até ação em
+      Redes; GOT_IP limpa as flags e fixa `s_last_good` (boot começa
+      por ela).
+- [x] Tela Redes: rede travada salva conecta direto (sem prompt);
+      `wifi_net_saved_pass()` novo.
+- [x] Backoff: min(2x, 30) — escada 2/4/8/16/30 sem o dente 32.
+- [x] Sobre = "M5.2"; docs/WIFI.md com formato e comportamento.
+- **Aceite HW**: duas redes salvas → desligar o AP atual rota para a
+      outra sem toque; senha errada numa delas rota (não suspende com
+      outras salvas); wifi.lua reescrito como lista; saved-connect sem
+      prompt; regressões M5.0b.
 - **Aceite HW**: fora de casa, log mostra `reconexão em 2 s (backoff)` →
       `4 s` → `8 s`… (não martelo fixo de 2 s) e NENHUM delay visível na
       UI durante retries; senha errada propositais → linha AUTH_FAIL

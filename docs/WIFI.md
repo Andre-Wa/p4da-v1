@@ -42,3 +42,32 @@ IDF mais novo — não usar enquanto estivermos pinados em 5.5.x.
 - Callbacks implementados em `main.cpp` e chamados de código C
   (`wifi_net_on_event_ui`) PRECISAM de `extern "C"` na definição, senão
   o link falha com undefined reference (mangling C++ vs C).
+
+## Multi-redes salvas (M5.2, 2026-10-05)
+
+`config/wifi.lua` agora aceita (e o PDA gera) uma LISTA de redes; o formato
+legado de um ssid só continua sendo lido (vira a entrada 1):
+
+```lua
+return {
+  auto_connect = true,
+  networks = {
+    { ssid = "Casa",   password = "..." },
+    { ssid = "Trabalho", password = "..." },
+  },
+}
+```
+
+Comportamento:
+- Boot: tenta a última rede que conectou (`s_last_good`).
+- Disconnect com `NO_AP_FOUND` (AP fora): marca a rede e rotaciona p/
+  próxima salva presente; a escada de backoff (2/4/8/16/30 s) conta por
+  rede (troca de rede zera p/ 2 s).
+- Disconnect com AUTH_FAIL/handshake (senha errada): marca a rede como
+  inválida neste ciclo e rotaciona; se TODAS falharem por auth,
+  suspende com `todas as redes salvas falharam (auth)…` até ação em
+  Redes (conectar por lá limpa a marca da rede escolhida).
+- Tela Redes: rede travada JÁ SALVA conecta direto ao tocar (sem prompt
+  de senha); rede nova pede senha e, ao conectar, entra na lista
+  (máx. 8; o arquivo é reescrito com a lista completa).
+- Standby pausa tudo como antes; o resume reconecta a rede corrente.
