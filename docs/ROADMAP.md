@@ -195,7 +195,7 @@ tela ao apertar RESET e não existe outra forma de sair do hibernate".
       (`docs/POWER_REWORK.md`), que também explica por que RESET não era
       a saída esperada na bateria (corte do IP5306 → tecla BF2).
 
-## M4.14 — Standby profundo, wake honesto e transições assinadas (FEITO; aguardando hardware)
+## M4.14 — Standby profundo, wake honesto e transições assinadas (FEITO; ✅ VALIDADO EM HARDWARE 2026-10-04, rodadas 1–3; ajustes M4.14.1–M4.14.4)
 Consome a fila de energia adiada no M4.13 (+ item 4, a anomalia dos logs
 de validação). Patch delta sobre v4.13+M4.13b:
 `patches/M4.14-energy.delta.patch` (workspace, fora do git).
@@ -255,7 +255,8 @@ de validação). Patch delta sobre v4.13+M4.13b:
       t≈348,6 s) curado — `idle_s` é recalculado após os polls, pois
       `power_mgmt_activity()` no meio do tick resetava o relógio e o
       valor do topo ficava velho.
-- [x] Sobre = "M4.14.4".
+- [x] Sobre = "M4.14.4". ✅ VALIDADO EM HARDWARE 2026-10-04 (4ª rodada,
+      incl. teste com senha errada p/ exercitar o loop de reconexão).
 - [x] **Build-fix v4.14.1** (achado no build do usuário, 2026-10-04):
       `sntp_start()` tinha sido inserida ANTES da definição de
       `sntp_synced()` (undeclared no IDF gcc); ordem corrigida. Lição:
@@ -263,6 +264,49 @@ de validação). Patch delta sobre v4.13+M4.13b:
       declaração/order em arquivos IDF-only escapa da suíte de host.
 - **Aceite HW**: `validacoes/VALIDACAO_M4.14.md` (fora do repo), que
       inclui o reteste do hibernate M4.13b (presente neste binário).
+
+## M4.15 — Estágio 1b: vizinhança dorme junto (FEITO; aguardando hardware)
+Consome parte do Estágio 1b de `docs/POWER_REWORK.md` com evidência na mão
+(issue esp-idf#18443; correntes do datasheet GT911). DFS/`esp_pm_configure`
+e teardown do painel seguem ADIADOS até o Estágio 0 (medição com
+amperímetro): sem número, não se otimiza.
+
+- [x] **Retry espúrio no standby** (log da senha errada, t≈17,5 s): o
+      handler de DISCONNECTED dorme 2 s dentro do event loop e chamava
+      `esp_wifi_connect()` sem re-checar `s_paused` ao acordar do delay;
+      agora re-checa (`standby no meio do retry — reconexão pausada
+      (M4.15)`).
+- [x] **GT911 dorme no STANDBY** quando o wake por toque não está armado:
+      `esp_lcd_touch_enter_sleep/exit_sleep` no standby_cb (~3,5 mA →
+      <50 µA); o proxy (M4.14.3/15) também finge `read_data` enquanto
+      cego (sem NACK por poll no I2C). Chave ON: chip acordado (é ele que
+      dá o wake).
+- [-] **C6 em reset no HIBERNATE — REVERTIDO no v4.15.2**: no P4 (XIP em
+      PSRAM) o `gpio_force_hold_all()` latcha os pads de MSPI/SPI e a
+      entrada do deep sleep stallou: `HP_SYS_HP_WDT_RESET` (rst 0x7) no
+      log do usuário (2026-10-05) + boot seguinte travado com latch
+      residual. A receita da esp-idf#18443 NÃO é portável p/ esta placa;
+      "C6 off no hibernate" fica ABERTO p/ o hibernate v2 (Estágio 4).
+      Hibernate volta ao fluxo M4.13b (sessão + NVS + shutdown do SD).
+- [x] **Debounce do BOOT (v4.15.2)**: o negedge da MESMA pressão que
+      pediu o standby chegava com a placa já dormindo (wake 42 ms após o
+      entry no log da 5ª rodada → ciclo off/on e "tela pisca" com
+      pressões longas); wake por BOOT em até 400 ms da entrada é igno-
+      rado e re-bloqueado (`bounce do BOOT ignorado (<400 ms no standby)`).
+      Aceito pelo usuário (2026-10-05): pressões MUITO longas (>2 s) ainda
+      podem acordar por micro-soltadas do botão (re-contato = pressão
+      nova legítima) — documentado, não é bug.
+- [x] **M4.15.3: restore de sessão adiado p/ o event loop**: aplicar no
+      bring-up crashava (`assert xTaskToNotify==NULL` em
+      `vTaskGenericNotifyGiveFromISR`: `invoke_from_event_loop` antes da
+      task ui_loop existir — log do usuário hibernando pela tela de
+      notas); agora o bring-up só parseia (`sessão lida: app=.. note=..`)
+      e o apply roda via `invoke_from_event_loop` após a criação da
+      ui_loop (`restaurando sessão: …`). Rama nova: `app=settings`
+      restaura a tela Config (antes caía no launcher).
+- [x] Sobre = "M4.15.3". Host: slint-compiler limpo, hosttest T1–T8,
+      md_test 24/24.
+- **Aceite HW**: `validacoes/VALIDACAO_M4.15.md` (lista também no chat).
 
 ## M4.12 — Gestos + pulldown de ajustes rápidos (FEITO; ✅ VALIDADO EM HARDWARE 2026-10-02 — "Suspender" corrigido no M4.13)
 PRIORIDADES 1 e 5 do usuário (2026-09-30) entregues juntas, porque "pulldown

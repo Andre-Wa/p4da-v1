@@ -142,6 +142,13 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         if (s_auto) {
             ESP_LOGI(TAG, "desconectado — reconectando em 2 s");
             vTaskDelay(pdMS_TO_TICKS(2000));
+            /* M4.15: o standby pode ter começado DURANTE os 2 s (visto no
+             * log da senha errada: connect espúrio em pleno standby);
+             * re-checa antes de gastar rádio. */
+            if (s_paused) {
+                ESP_LOGI(TAG, "standby no meio do retry — reconexão pausada (M4.15)");
+                break;
+            }
             esp_wifi_connect();
         }
         break;

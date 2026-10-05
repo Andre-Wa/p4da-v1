@@ -28,6 +28,16 @@ static const char *TAG = "touch_init";
  * velhos no wake), mas o Slint recebe 0 pontos enquanto cego. */
 static bool (*s_real_get_xy)(esp_lcd_touch_handle_t, uint16_t *, uint16_t *,
                              uint16_t *, uint8_t *, uint8_t) = NULL;
+/* M4.15: com o GT911 dormindo no standby (chave OFF), read_data não pode
+ * bater no I2C (NACK a cada poll = spam + bus ocupado): enquanto cego,
+ * o read é fingido; get_xy já devolvia 0 pontos (M4.14.3). */
+static esp_err_t (*s_real_read_data)(esp_lcd_touch_handle_t) = NULL;
+
+static esp_err_t blind_read_data(esp_lcd_touch_handle_t tp)
+{
+    if (power_mgmt_touch_blind()) return ESP_OK;
+    return s_real_read_data(tp);
+}
 
 static bool blind_get_xy(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y,
                          uint16_t *strength, uint8_t *point_num,
@@ -96,6 +106,8 @@ esp_err_t board_touch_init(esp_lcd_touch_handle_t *out_touch)
 
     s_real_get_xy = (*out_touch)->get_xy;   /* M4.14.3: proxy de cegueira */
     (*out_touch)->get_xy = blind_get_xy;
+    s_real_read_data = (*out_touch)->read_data;   /* M4.15: sem I2C cego */
+    (*out_touch)->read_data = blind_read_data;
 
     ESP_LOGI(TAG, "GT911 inicializado no I2C%d (SDA=%d SCL=%d)",
              BOARD_I2C_PORT, BOARD_I2C_SDA_GPIO, BOARD_I2C_SCL_GPIO);

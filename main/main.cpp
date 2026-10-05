@@ -55,6 +55,9 @@ static std::string g_fm_dir;
 static bool g_hid_seen = false;
 static std::string s_session_app = "launcher";
 static std::string s_session_note = "";
+/* M4.15.3: sessão parseada no bring-up, aplicada no event loop. */
+static std::string s_rest_app, s_rest_note, s_rest_path;
+static bool s_rest_pending = false;
 
 /* Geometria do editor — ESPELHA os tokens ESTÁTICOS do theme.slint
  * (line-h 28, osk-h 193, status-h 34, btn-h-sm 39, body 18px => pitch
@@ -1135,22 +1138,41 @@ static void session_restore_if_needed(void)
     p = s.find("note=");
     if (p != std::string::npos) note = s.substr(p + 5, s.find('\n', p) - p - 5);
 
-    ESP_LOGI(TAG, "restaurando sessão: app=%s note=%s", app.c_str(), note.c_str());
-    if (app == "noteedit" && !note.empty()) {
-        std::string full = std::string(pda_root()) + "/" + note;
+    /* M4.15.3: só PARSEIA aqui. Aplicar no bring-up crashava: o ramo
+     * noteedit chama slint::invoke_from_event_loop ANTES da task ui_loop
+     * existir → assert xTaskToNotify==NULL em ISR-context (log do
+     * usuário 2026-10-05). A aplicação roda no event loop (abaixo). */
+    ESP_LOGI(TAG, "sessão lida: app=%s note=%s (aplica no event loop)",
+             app.c_str(), note.c_str());
+    s_rest_app = app;
+    s_rest_note = note;
+    s_rest_path = path;
+    s_rest_pending = true;
+}
+
+static void session_restore_apply(void)
+{
+    if (!s_rest_pending) return;
+    s_rest_pending = false;
+    ESP_LOGI(TAG, "restaurando sessão: app=%s note=%s",
+             s_rest_app.c_str(), s_rest_note.c_str());
+    if (s_rest_app == "noteedit" && !s_rest_note.empty()) {
+        std::string full = std::string(pda_root()) + "/" + s_rest_note;
         ed_open_path_async(full, true);
-    } else if (app == "notes") {
+    } else if (s_rest_app == "notes") {
         refresh_notes_list();
         g_ui->set_active_app(AppState::NotesList);
-    } else if (app == "files") {
+    } else if (s_rest_app == "files") {
         g_fm_dir = pda_root();
         list_dir_async(g_fm_dir);
         g_ui->set_active_app(AppState::FileManager);
-    } else if (app == "scripts") {
+    } else if (s_rest_app == "scripts") {
         refresh_scripts_list();
         g_ui->set_active_app(AppState::Scripts);
+    } else if (s_rest_app == "settings") {
+        g_ui->set_active_app(AppState::Settings);   /* ramo novo (M4.15.3) */
     }
-    storage_delete_file(path);
+    storage_delete_file(s_rest_path.c_str());
 }
 
 /* ================================================================== */
@@ -1183,6 +1205,7 @@ static void push_settings_to_ui(void)
 /* Heap-allocated de propósito: ComponentHandle não tem ctor default, e o
  * handle precisa viver para sempre (dono da referência do component). */
 static slint::ComponentHandle<AppWindow> *s_ui_run_handle = nullptr;
+static esp_lcd_touch_handle_t s_touch_handle = nullptr;   /* M4.15: GT911 sleep no standby */
 
 static void ui_run_task(void *arg)
 {
@@ -1216,6 +1239,7 @@ extern "C" void app_main(void)
 
     esp_lcd_touch_handle_t touch = nullptr;
     ESP_ERROR_CHECK(board_touch_init(&touch));
+    s_touch_handle = touch;
 
     static std::vector<slint::platform::Rgb565Pixel> framebuffer(
         BOARD_LCD_H_RES_NATIVE * BOARD_LCD_V_RES_NATIVE);
@@ -1801,9 +1825,19 @@ extern "C" void app_main(void)
         const bool ls = power_mgmt_light_sleep_active();
         if (entering) {
             wifi_net_pause();   /* M4.14: standby não reconecta nem polla NTP */
+            /* M4.15: sem wake por toque armado, o GT911 dorme no standby
+             * (~3,5 mA economizados); o proxy do touch já cega read/get_xy
+             * então não há I2C nem pontos fantasmas. Com a chave ON o chip
+             * fica acordado (é ele que dá o wake). */
+            if (s_touch_handle && !power_mgmt_touch_wake_armed()) {
+                if (esp_lcd_touch_enter_sleep(s_touch_handle) == ESP_OK) {
+                    ESP_LOGI(TAG, "GT911 em sleep (standby sem wake por toque)");
+                }
+            }
             if (ls) usb_hid_keyboard_prepare_sleep();
             return;
         }
+        if (s_touch_handle) esp_lcd_touch_exit_sleep(s_touch_handle);
         wifi_net_resume();      /* M4.14: reconecta/NTP volta ao acordar */
         if (ls) {
             storage_remount_sd();
@@ -1844,6 +1878,11 @@ extern "C" void app_main(void)
         ok = xTaskCreate(ui_run_task, "ui_loop", 32768, NULL, 5, NULL);
     }
     ESP_ERROR_CHECK(ok == pdPASS ? ESP_OK : ESP_FAIL);
+    /* M4.15.3: a task ui_loop existe (handle válido p/ notify); o lambda
+     * roda quando o event loop começar — seguro p/ invoke/ed_load. */
+    if (s_rest_pending) {
+        slint::invoke_from_event_loop([]() { session_restore_apply(); });
+    }
     ESP_LOGI(TAG, "bring-up completo, entrando no loop do Slint");
     /* app_main retorna: a task main se encerra e libera os 16 KiB internos */
 }

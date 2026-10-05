@@ -52,6 +52,9 @@ pda_power_state_t power_mgmt_state(void);
  *  callback de UI e actions fantasmas de elementos com a tela off). */
 bool power_mgmt_touch_blind(void);
 
+/** M4.15: snapshot da chave de wake por toque do standby em curso. */
+bool power_mgmt_touch_wake_armed(void);
+
 /** "Dormir agora" (menu Config): força o próximo degrau = STANDBY. */
 void power_mgmt_request_standby(void);
 

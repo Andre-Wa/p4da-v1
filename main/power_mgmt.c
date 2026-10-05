@@ -108,6 +108,10 @@ bool power_mgmt_touch_blind(void)
     return s_state == PDA_PWR_STANDBY && !s_touch_wake_ok;
 }
 
+/** M4.15: a chave de wake por toque estava armada AO ENTRAR neste standby?
+ *  (standby_cb usa p/ decidir se o GT911 dorme.) */
+bool power_mgmt_touch_wake_armed(void) { return s_touch_wake_ok; }
+
 void power_mgmt_request_standby(void)
 {
     ESP_LOGI(TAG, "standby solicitado manualmente");
@@ -261,14 +265,37 @@ static void enter_standby(const char *why)
          * economizado vem de backlight 0 + painel blank. Wake por ISR de
          * GPIO (botão/toque) ou por qualquer atividade de UI/USB. */
         xSemaphoreTake(s_wake_sem, 0);   /* drain */
-        if (cfg->deep_sleep_after_s > 0) {
-            if (xSemaphoreTake(s_wake_sem,
-                               pdMS_TO_TICKS((uint32_t)cfg->deep_sleep_after_s * 1000U)) == pdFALSE) {
-                ESP_LOGI(TAG, "idle longo -> hibernando");
-                power_mgmt_hibernate();   /* noreturn */
+        /* M4.15.2: bounce do BOOT na entrada — o negedge da MESMA pressão
+         * que pediu o standby chega com a placa já dormindo (log do
+         * usuário: wake 42 ms após o entry). Wake por BOOT em até 400 ms
+         * da entrada = bounce: ignora e re-bloqueia. Pressão intencional
+         * p/ acordar vem depois disso. */
+        const int64_t t_enter_us = esp_timer_get_time();
+        const int64_t deadline_us = t_enter_us +
+                                    (int64_t)cfg->deep_sleep_after_s * 1000000LL;
+        for (;;) {
+            bool got;
+            if (cfg->deep_sleep_after_s > 0) {
+                const int64_t now_us = esp_timer_get_time();
+                const int64_t remain_ms = (deadline_us - now_us) / 1000LL;
+                if (remain_ms <= 0) {
+                    ESP_LOGI(TAG, "idle longo -> hibernando");
+                    power_mgmt_hibernate();   /* noreturn */
+                }
+                got = xSemaphoreTake(s_wake_sem,
+                                     pdMS_TO_TICKS((uint32_t)remain_ms)) == pdTRUE;
+                if (!got) continue;   /* reavalia o deadline */
+            } else {
+                xSemaphoreTake(s_wake_sem, portMAX_DELAY);
+                got = true;
             }
-        } else {
-            xSemaphoreTake(s_wake_sem, portMAX_DELAY);
+            if (got && s_wake_src == 1 &&
+                (esp_timer_get_time() - t_enter_us) < 400000LL) {
+                ESP_LOGI(TAG, "bounce do BOOT ignorado (<400 ms no standby)");
+                xSemaphoreTake(s_wake_sem, 0);
+                continue;
+            }
+            break;
         }
     }
 
@@ -292,6 +319,12 @@ void power_mgmt_hibernate(void)
     hibernate_flag_set();
     ESP_LOGI(TAG, "HIBERNATE: flag NVS gravado — volta só por RESET/power-on "
                   "(sessão será restaurada no boot)");
+    /* M4.15.2: REVERT do C6-off-no-hibernate. No P4 (XIP em PSRAM) o
+     * gpio_force_hold_all() latcha pads de MSPI/SPI e a entrada do deep
+     * sleep stallou: HP_SYS_HP_WDT_RESET (rst 0x7) no log do usuário de
+     * 2026-10-05 + boot seguinte travado com latch residual. A receita da
+     * esp-idf#18443 não é portável p/ esta placa; "C6 off no hibernate"
+     * fica ABERTO p/ o hibernate v2 (Estágio 4) com outra abordagem. */
     board_display_backlight_set(0);
     storage_shutdown_sd();          /* unmount + LDO off: sem corrupção */
     esp_deep_sleep_start();         /* sem wake source: volta no power-on */
