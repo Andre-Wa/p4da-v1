@@ -16,6 +16,7 @@ import { EditorScreen, MdRun } from "screens/editor.slint";
 import { ScriptsScreen } from "screens/scripts.slint";
 import { SettingsScreen } from "screens/settings.slint";
 import { NetworksScreen } from "screens/networks.slint";
+import { MusicScreen } from "screens/music.slint";
 // Fonte default da app: família INTERNA "PDA Mono" em TODA a interface.
 // "PDA Mono" é o nome que tools/font_pipeline.py grava na face gerada —
 // a fonte de ORIGEM (hoje Roboto Mono wght 400/700) pode ser trocada por
@@ -31,6 +32,7 @@ export enum AppState {
     Scripts,
     Settings,
     Networks,
+    Music,
 }
 
 export component AppWindow inherits Window {
@@ -125,6 +127,14 @@ export component AppWindow inherits Window {
     in property <[bool]> net-locked;
     in property <string> net-current: "";
     callback net-pick(int);
+    in property <[string]> mus-tracks;
+    in property <string> mus-dev: "";
+    in property <string> mus-state: "";
+    in property <string> mus-track: "";
+    callback mus-play(int);
+    callback mus-stop();
+    callback mus-next();
+    callback mus-refresh();
     callback net-rescan();
 
     // ---- config ----
@@ -308,6 +318,19 @@ export component AppWindow inherits Window {
                 delete-file => { root.ed-delete(); }
                 toggle-osk => { root.ed-toggle-osk(); }
                 toggle-mode => { root.ed-toggle-mode(); }
+                go-back => { root.app-back(); }
+            }
+            if root.active-app == AppState.Music : MusicScreen {
+                width: 100%;
+                height: 100%;
+                tracks: root.mus-tracks;
+                dev: root.mus-dev;
+                state: root.mus-state;
+                track: root.mus-track;
+                play(i) => { root.mus-play(i); }
+                stop => { root.mus-stop(); }
+                next => { root.mus-next(); }
+                refresh => { root.mus-refresh(); }
                 go-back => { root.app-back(); }
             }
             if (root.active-app == AppState.Scripts) : ScriptsScreen {

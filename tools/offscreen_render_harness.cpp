@@ -124,6 +124,20 @@ int main(int argc, char **argv)
             runmodels->push_back(rm);
         }
         ui->set_ed_runs(runmodels);
+    } else if (mode == "music") {
+        /* M5a: tela Música com amostra */
+        ui->set_active_app(AppState::Music);
+        auto mk = [](std::vector<std::string> v) {
+            auto m = std::make_shared<slint::VectorModel<slint::SharedString>>();
+            for (auto &x : v) m->push_back(slint::SharedString(x));
+            return m;
+        };
+        ui->set_mus_tracks(mk({"abertura.wav", "trilha_02.wav", "vocal_44k1.wav"}));
+        ui->set_mus_dev(slint::SharedString("FiiO DAC"));
+        ui->set_mus_state(slint::SharedString("tocando"));
+        ui->set_mus_track(slint::SharedString("trilha_02.wav"));
+        lines = { "", "", "" };
+        styles = { 9, 9, 9 };
     } else if (mode == "networks") {
         /* M5.0b (A5): tela Redes com amostra p/ auditar layout Slint 1.12 */
         ui->set_active_app(AppState::Networks);

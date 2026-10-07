@@ -9,6 +9,7 @@ idf_component_register(
         "lua_runtime.c"
         "power_mgmt.c"
         "wifi_net.c"
+        "audio_uac.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_lcd

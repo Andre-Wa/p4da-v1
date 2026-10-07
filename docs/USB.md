@@ -94,3 +94,25 @@ nunca pela task de UI.
   já casa com isso.
 - Alto-falante/bateria JST chegados: caminho ES8311/NS4150 volta ao plano
   (beep de UI primeiro), UAC vira alternativa, não única saída.
+
+## M5a.1 — áudio USB implementado (2026-10-06)
+
+- Componente `espressif/usb_host_uac ==1.5.0` como **segundo client** da
+  Host Library (o 1º é o HID; `usb_host_install` segue uma vez só na
+  `usb_host_lib_task` do HID). O driver UAC roda a própria background
+  task; nossos comandos play/stop vivem na task `au_play` (fila de 2).
+- Fluxo: `TX_CONNECTED` → open curto p/ ler nome do produto → close;
+  `audio_uac_play()` → open → `get_device_alt_param` escolhe o alt
+  setting compatível com o WAV (PCM16, 1–2 ch, rate discreto/contínuo) →
+  `device_start` → loop de `device_write` em chunks de 4 KB (timeout
+  2 s) → stop/close no fim/stop/unplug.
+- WAV round 1: PCM 16 bits 1–2 canais de `/pda/music/*.wav`; outro
+  formato = estado "erro: …" na tela, sem crash.
+- UI: tela Música (`screens/music.slint`) + tile do launcher habilitado
+  (glifo music_note já estava no subset) + `AppState::Music` + restore
+  de sessão "music". Estado/dispositivo/faixa via event cb →
+  `invoke_from_event_loop`.
+- Evidência offscreen: `render_music.png`.
+- Round 2 (M5a.2): hub p/ teclado+DAC juntos
+  (`CONFIG_USB_HOST_HUBS_SUPPORTED`), pause (suspend/resume), teclas de
+  mídia, volume por device; M5b: decoder MP3 e playlists.

@@ -22,6 +22,7 @@
 #include "lua_runtime.h"
 #include "power_mgmt.h"
 #include "wifi_net.h"
+#include "audio_uac.h"
 #include "nvs_flash.h"
 
 #include "esp_log.h"
@@ -89,6 +90,8 @@ static void activity(void) { power_mgmt_activity(); }
 /* forward decls (ordem de definição vs uso) */
 static void refresh_notes_list(void);
 static void refresh_scripts_list(void);
+static void refresh_music_list(void);
+static void push_mus_ui(void);
 static void list_dir_async(const std::string dir);
 static void nav_goto(AppState st);
 static void nav_back(void);
@@ -1112,6 +1115,55 @@ static void run_script_async(const std::string name)
 /* ================================================================== */
 /* SESSÃO (hibernação)                                                 */
 /* ================================================================== */
+/* ================================================================== */
+/* M5a — MÚSICA (WAV do cartão -> UAC USB)                             */
+/* ================================================================== */
+static std::vector<std::string> g_mus_names;
+static int g_mus_cur = -1;
+
+static void push_mus_ui(void)
+{
+    if (!g_ui) return;
+    auto m = std::make_shared<slint::VectorModel<slint::SharedString>>();
+    for (auto &n : g_mus_names) m->push_back(slint::SharedString(n));
+    g_ui->set_mus_tracks(m);
+    g_ui->set_mus_dev(slint::SharedString(
+        audio_uac_present() ? audio_uac_dev_name() : "(sem device UAC)"));
+    g_ui->set_mus_state(slint::SharedString(audio_uac_state()));
+    g_ui->set_mus_track(slint::SharedString(audio_uac_track()));
+}
+
+static void refresh_music_list(void)
+{
+    spawn_thread("io_music_ls", 8192, []() {
+        std::vector<std::string> out;
+        std::string dir = std::string(pda_root()) + "/music";
+        DIR *d = opendir(dir.c_str());
+        if (d) {
+            struct dirent *e;
+            while ((e = readdir(d)) != NULL) {
+                std::string n = e->d_name;
+                if (n.size() > 4 && !strcasecmp(n.c_str() + n.size() - 4, ".wav"))
+                    out.push_back(n);
+            }
+            closedir(d);
+        }
+        std::sort(out.begin(), out.end());
+        slint::invoke_from_event_loop([out]() {
+            g_mus_names = out;
+            push_mus_ui();
+        });
+    });
+}
+
+static void music_play_idx(int i)
+{
+    if (i < 0 || (size_t)i >= g_mus_names.size()) return;
+    g_mus_cur = i;
+    std::string full = std::string(pda_root()) + "/music/" + g_mus_names[i];
+    spawn_thread("io_music", 8192, [full]() { audio_uac_play(full.c_str()); });
+}
+
 static void session_save(void *ctx)
 {
     (void)ctx;
@@ -1177,6 +1229,9 @@ static void session_restore_apply(void)
         g_ui->set_active_app(AppState::Scripts);
     } else if (s_rest_app == "settings") {
         g_ui->set_active_app(AppState::Settings);   /* ramo novo (M4.15.3) */
+    } else if (s_rest_app == "music") {
+        refresh_music_list();
+        g_ui->set_active_app(AppState::Music);
     }
     storage_delete_file(s_rest_path.c_str());
 }
@@ -1317,6 +1372,10 @@ extern "C" void app_main(void)
             refresh_scripts_list();
             nav_goto(AppState::Scripts);
             s_session_app = "scripts";
+        } else if (n == "Musica") {
+            refresh_music_list();
+            nav_goto(AppState::Music);
+            s_session_app = "music";
         } else if (n == "Redes") {
             nav_goto(AppState::Networks);
             net_start_scan();
@@ -1564,6 +1623,15 @@ extern "C" void app_main(void)
             push_fm_ui();
         }
     });
+    ui->on_mus_play([](int i) { activity(); music_play_idx(i); push_mus_ui(); });
+    ui->on_mus_stop([]() { activity(); audio_uac_stop(); push_mus_ui(); });
+    ui->on_mus_next([]() {
+        activity();
+        if (!g_mus_names.empty())
+            music_play_idx((g_mus_cur + 1) % (int)g_mus_names.size());
+        push_mus_ui();
+    });
+    ui->on_mus_refresh([]() { activity(); refresh_music_list(); });
     ui->on_app_back([]() {
         activity();
         /* saindo da tela Redes sem escolher: retoma reconexão da rede salva */

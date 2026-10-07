@@ -624,6 +624,25 @@ toda a interface".
 
 ## M5 — Áudio & player de música
 
+### M5a.1 — Áudio USB: UAC + player WAV + tela Música (FEITO; aguardando hardware)
+- [x] `espressif/usb_host_uac ==1.5.0` como 2º client da Host Library
+      (HID segue 1º; install único na usb_host_lib_task).
+- [x] `main/audio_uac.[ch]`: install com retry; open/alt-param/start/
+      write/stop/close; disconnect → parada limpa; nome do produto p/ UI.
+- [x] WAV PCM16 1–2 ch de `/pda/music/`; fmt não suportado = erro na
+      tela, sem crash.
+- [x] Tela Música (lista + Saída/Faixa/Estado + Parar/Próxima/Att/
+      Voltar); tile do launcher habilitado; AppState::Music; sessão
+      "music"; evidência `render_music.png`.
+- [x] Sobre = "M5a.1"; slint limpo, hosttest T1–T8, md_test 24/24.
+- **Aceite HW**: DAC/fone USB-C (sem hub): `speaker UAC encontrado` +
+      `UAC device: "…"` no log; tocar/parar/trocar faixa com som real;
+      unplugar tocando → "sem dispositivo" sem crash; replugar → toca;
+      WAV 24 bits → estado de erro; standby durante música → áudio
+      continua; teclado sozinho segue ok.
+- **Limitações round 2 (M5a.2)**: hub (teclado+DAC juntos), pause,
+      teclas de mídia, volume; M5b: MP3/playlists.
+
 ### M5.0 — Passe M3 Expressive (FEITO; aguardando hardware; abre a M5 por pedido do usuário)
 Wishlist prioridade 4 (2026-09-30), escopo adaptado ao painel/fontes mono.
 

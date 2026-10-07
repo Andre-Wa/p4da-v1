@@ -8,3 +8,6 @@ sdkconfig.old
 .clangd
 -l
 .test
+# core dumps de ferramentas host (gdb do panic decoder etc.)
+core
+core.*

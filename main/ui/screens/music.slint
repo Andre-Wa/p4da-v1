@@ -1,0 +1,102 @@
+// screens/music.slint — M5a: player de WAVs do cartão via USB (UAC)
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { TonalButton, GhostButton, FilledButton } from "../elements/buttons.slint";
+import { Surface, ScreenTitle } from "../elements/surfaces.slint";
+
+export component MusicScreen inherits Rectangle {
+    in property <[string]> tracks;
+    in property <string> dev;
+    in property <string> state;
+    in property <string> track;
+    callback play(int);
+    callback stop();
+    callback next();
+    callback refresh();
+    callback go-back();
+
+    HorizontalLayout {
+        padding: Theme.sp-lg;
+        spacing: Theme.sp-md;
+
+        VerticalLayout {
+            width: 320px;
+            spacing: Theme.sp-sm;
+            HorizontalLayout {
+                spacing: Theme.sp-sm;
+                ScreenTitle { label: "Música"; horizontal-stretch: 1; }
+                TonalButton { width: 44px; h: Theme.btn-h-sm; fsize: Theme.type-label; text: "Att"; clicked => { root.refresh(); } }
+            }
+            Surface {
+                level: 1;
+                vertical-stretch: 1;
+                clip: true;
+                ListView {
+                    width: 100%;
+                    height: 100%;
+                    for t[i] in root.tracks: Rectangle {
+                        height: 40px;
+                        clip: true;
+                        Text {
+                            x: Theme.sp-sm;
+                            text: t;
+                            color: Theme.on-surface;
+                            font-size: Theme.type-body;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            width: 100%;
+                            height: 100%;
+                            background: Theme.state-pressed;
+                            visible: ta.pressed;
+                            border-radius: Theme.shape-sm;
+                            opacity: 10%;
+                        }
+                        ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => { root.play(i); }
+                        }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.outline-var; }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: Theme.sp-sm;
+            Text {
+                text: "Saída: " + root.dev;
+                color: Theme.on-surface-var;
+                font-size: Theme.type-label;
+            }
+            Text {
+                text: "Faixa: " + root.track;
+                color: Theme.on-surface;
+                font-size: Theme.type-body;
+                wrap: word-wrap;
+            }
+            Text {
+                text: "Estado: " + root.state;
+                color: Theme.tertiary;
+                font-size: Theme.type-body;
+            }
+            HorizontalLayout {
+                spacing: Theme.sp-sm;
+                FilledButton { horizontal-stretch: 1; text: "Parar"; clicked => { root.stop(); } }
+                GhostButton { horizontal-stretch: 1; text: "Próxima"; clicked => { root.next(); } }
+            }
+            HorizontalLayout {
+                spacing: Theme.sp-sm;
+                GhostButton { horizontal-stretch: 1; text: "Voltar"; clicked => { root.go-back(); } }
+            }
+            Text {
+                text: "WAV PCM16 em /pda/music/ (44k1/48k estéreo típicos).";
+                font-size: Theme.type-tiny;
+                color: Theme.on-surface-var;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
