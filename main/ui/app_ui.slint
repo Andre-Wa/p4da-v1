@@ -134,6 +134,8 @@ export component AppWindow inherits Window {
     in-out property <float> cfg-deep-s: 0;
     in-out property <bool> cfg-wake-touch: false;
     in-out property <string> cfg-accent: "cyan";
+    in-out property <bool> cfg-wifi-on: true;
+    callback cfg-set-wifi-on(bool);
     init => { Theme.accent = root.cfg-accent; }
     changed cfg-accent => { Theme.accent = root.cfg-accent; }
     in-out property <bool> cfg-boot-standby: false;
@@ -338,6 +340,8 @@ export component AppWindow inherits Window {
                 deep-s <=> root.cfg-deep-s;
                 wake-touch <=> root.cfg-wake-touch;
                 boot-standby <=> root.cfg-boot-standby;
+                wifi-on <=> root.cfg-wifi-on;
+                set-wifi-on(b) => { root.cfg-set-wifi-on(b); }
                 osk-auto <=> root.cfg-osk-auto;
                 light-sleep <=> root.cfg-light-sleep;
                 store-info: root.cfg-store-info;

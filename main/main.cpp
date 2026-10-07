@@ -197,6 +197,12 @@ static void on_scan_done(const wifi_net_ap_t *aps, int count, void *ctx)
 
 static void net_start_scan(void)
 {
+    /* M5.3.2: rádio desligado → aviso em vez de scan que falha. */
+    if (!wifi_net_enabled()) {
+        log_line("[wifi] rádio desligado — ligue em Config > Redes", NULL);
+        g_ui->set_net_current(slint::SharedString("(rádio desligado)"));
+        return;
+    }
     /* Longe da rede salva, o loop de reconexão a cada 2 s atrapalha o
      * scan (rádio ocupado); pausa durante a varredura da tela Redes. */
     wifi_net_set_autoreconnect(false);
@@ -1186,6 +1192,7 @@ static void push_settings_to_ui(void)
     g_ui->set_cfg_off_s((float)s->screen_off_after_s);
     g_ui->set_cfg_deep_s((float)s->deep_sleep_after_s);
     g_ui->set_cfg_wake_touch(s->wake_on_touch);
+    g_ui->set_cfg_wifi_on(s->wifi_enabled);
     g_ui->set_cfg_accent(slint::SharedString(s->accent));
     g_ui->set_cfg_boot_standby(s->boot_btn_standby);
     g_ui->set_cfg_osk_auto(s->onscreen_keyboard_auto);
@@ -1507,6 +1514,7 @@ extern "C" void app_main(void)
             char msg[200];
             snprintf(msg, sizeof(msg), "[wifi] conectando em \"%s\"", g_wifi_pick_ssid.c_str());
             log_line(msg, NULL);
+            g_ui->set_cfg_wifi_on(true);   /* M5.3.2: switch reflete o rádio */
             wifi_net_connect(g_wifi_pick_ssid.c_str(), g_fm.prompt_text.c_str(), true);
         } else if (g_fm.prompt_action == "delete") {
             esp_err_t err = storage_rm_rf(target.c_str());
@@ -1536,12 +1544,14 @@ extern "C" void app_main(void)
             char msg[160];
             snprintf(msg, sizeof(msg), "[wifi] conectando em \"%s\" (aberta)", ap.ssid);
             log_line(msg, NULL);
+            g_ui->set_cfg_wifi_on(true);   /* M5.3.2: switch reflete o rádio */
             wifi_net_connect(ap.ssid, "", true);
         } else if (const char *sp = wifi_net_saved_pass(ap.ssid)) {
             /* M5.2: rede já salva conecta direto, sem prompt. */
             char msg[160];
             snprintf(msg, sizeof(msg), "[wifi] conectando em \"%s\" (senha salva)", ap.ssid);
             log_line(msg, NULL);
+            g_ui->set_cfg_wifi_on(true);   /* M5.3.2: switch reflete o rádio */
             wifi_net_connect(ap.ssid, sp, false);
         } else {
             g_wifi_pick_ssid = ap.ssid;
@@ -1780,6 +1790,13 @@ extern "C" void app_main(void)
         ui->set_cfg_accent(slint::SharedString(pda_settings()->accent));
         ESP_LOGI(TAG, "[config] acento salvo: %s", pda_settings()->accent);
     });
+    ui->on_cfg_set_wifi_on([](bool on) {
+        activity();
+        pda_settings_set("net.wifi_enabled", 0, true, on, NULL);
+        pda_config_save();
+        wifi_net_set_enabled(on);
+        ESP_LOGI(TAG, "[config] wifi %s pela chave", on ? "ligado" : "desligado");
+    });
     ui->on_cfg_open_networks([]() {
         activity();
         nav_goto(AppState::Networks);
@@ -1881,6 +1898,7 @@ extern "C" void app_main(void)
     power_mgmt_init();
 
     /* Wi-Fi/NTP (M4): sem config/wifi.lua retorna NOT_FOUND e segue offline */
+    wifi_net_set_enabled_boot(pda_settings()->wifi_enabled);   /* M5.3 */
     if (wifi_net_init() == ESP_OK) {
         g_ui->set_status_wifi(slint::SharedString("wifi ..."));
     } else {

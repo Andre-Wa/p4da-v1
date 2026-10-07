@@ -64,6 +64,7 @@ static void apply_defaults(pda_settings_t *s)
     s->onscreen_keyboard_auto = true;
     strlcpy(s->cursor_style, "bar", sizeof(s->cursor_style));
     strlcpy(s->accent, "cyan", sizeof(s->accent));
+    s->wifi_enabled = true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -198,6 +199,13 @@ static esp_err_t parse_buffer(const char *name, const char *data, size_t len,
     } else {
         ESP_LOGW(TAG, "%s: seção 'display' ausente (%s)", name,
                  lua_typename(L, lua_type(L, -1)));
+    }
+    lua_pop(L, 1);
+
+    /* net (M5.3) */
+    lua_getfield(L, -1, "net");
+    if (lua_istable(L, -1)) {
+        tmp.wifi_enabled = tbl_bool(L, -1, "wifi_enabled", tmp.wifi_enabled);
     }
     lua_pop(L, 1);
 
@@ -397,9 +405,10 @@ static void nvs_shadow_save(const pda_settings_t *s)
     nvs_set_u8(h, "ls", s->light_sleep ? 1 : 0);
     nvs_set_str(h, "tz", s->timezone);
     nvs_set_str(h, "ntp", s->ntp_server);
-    nvs_set_str(h, "cursor", s->cursor_style);
-    nvs_set_str(h, "accent", s->accent);   /* M4.11b: sem isto a cura
+    nvs_set_str(h, "cursor", s->cursor_style);   /* M4.11b: sem isto a cura
                                                   * pelo NVS apagava o cursor */
+    nvs_set_str(h, "accent", s->accent);
+    nvs_set_u8(h, "wifion", s->wifi_enabled ? 1 : 0);   /* M5.3 */
     nvs_commit(h);
     nvs_close(h);
 }
@@ -431,6 +440,7 @@ static bool nvs_shadow_load(pda_settings_t *s)
     sz = sizeof(s->accent);
     nvs_get_str(h, "accent", s->accent, &sz);
     if (strcmp(s->accent,"cyan")&&strcmp(s->accent,"violet")&&strcmp(s->accent,"green")&&strcmp(s->accent,"amber")&&strcmp(s->accent,"pink")) strlcpy(s->accent,"cyan",sizeof(s->accent));
+    if (nvs_get_u8(h, "wifion", &b) == ESP_OK) s->wifi_enabled = b != 0;
     nvs_close(h);
     return ok;
 }
@@ -459,6 +469,9 @@ static int serialize_buf(char *buf, size_t sz, const pda_settings_t *s)
         "    timezone = \"%s\",\n"
         "    ntp_server = \"%s\",\n"
         "  },\n"
+        "  net = {\n"
+        "    wifi_enabled = %s,    -- M5.3: radio on/off pela tela Config\n"
+        "  },\n"
         "  ui = {\n"
         "    onscreen_keyboard_auto = %s, -- teclado virtual so sem teclado USB\n"
         "    cursor = \"%s\",             -- cursor do editor: bar | under | block\n"
@@ -471,6 +484,7 @@ static int serialize_buf(char *buf, size_t sz, const pda_settings_t *s)
         s->boot_btn_standby ? "true" : "false",
         s->light_sleep ? "true" : "false",
         s->timezone, s->ntp_server,
+        s->wifi_enabled ? "true" : "false",
         s->onscreen_keyboard_auto ? "true" : "false",
         s->cursor_style, s->accent);
     if (n <= 0 || (size_t)n >= sz) return -1;
@@ -479,7 +493,7 @@ static int serialize_buf(char *buf, size_t sz, const pda_settings_t *s)
 
 static esp_err_t serialize_to(const char *path, const pda_settings_t *s)
 {
-    char buf[1024];
+    char buf[1536];   /* M5.3: seção net entrou; 1024 ficava no limite */
     int n = serialize_buf(buf, sizeof(buf), s);
     if (n < 0) return ESP_ERR_INVALID_SIZE;
     return storage_write_text_file(path, buf, (size_t)n);
@@ -492,7 +506,7 @@ static esp_err_t serialize_to(const char *path, const pda_settings_t *s)
  * brightness = 30, mas todos os campos voltaram INT_MAX com parse=ok). */
 static bool parser_selftest(const pda_settings_t *s)
 {
-    char buf[1024];
+    char buf[1536];   /* M5.3: mesmo teto do serialize_to */
     int n = serialize_buf(buf, sizeof(buf), s);
     if (n < 0) return false;
     pda_settings_t rt = *s;
@@ -514,7 +528,8 @@ static bool parser_selftest(const pda_settings_t *s)
               strcmp(rt.timezone, s->timezone) == 0 &&
               strcmp(rt.ntp_server, s->ntp_server) == 0 &&
               strcmp(rt.cursor_style, s->cursor_style) == 0 &&
-              strcmp(rt.accent, s->accent) == 0;
+              strcmp(rt.accent, s->accent) == 0 &&
+              rt.wifi_enabled == s->wifi_enabled;
     if (!ok) {
         /* M4.11b: dizia só "FALHOU" — no boot de 2026-09-30 isso escondeu
          * que TODOS os numéricos voltavam INT_MAX (ABI LUA_32BITS). Loga os
@@ -744,6 +759,7 @@ bool pda_settings_get(const char *key, double *out_num, bool *out_bool,
     if (!strcmp(key, "ui.onscreen_keyboard_auto")) { if (out_bool) *out_bool = s_cfg.onscreen_keyboard_auto; return true; }
     if (!strcmp(key, "ui.cursor")) { if (out_str) strlcpy(out_str, s_cfg.cursor_style, str_sz); return true; }
     if (!strcmp(key, "ui.accent")) { if (out_str) strlcpy(out_str, s_cfg.accent, str_sz); return true; }
+    if (!strcmp(key, "net.wifi_enabled")) { if (out_bool) *out_bool = s_cfg.wifi_enabled; return true; }
     if (!strcmp(key, "locale.timezone")) { if (out_str) strlcpy(out_str, s_cfg.timezone, str_sz); return true; }
     if (!strcmp(key, "locale.ntp_server")) { if (out_str) strlcpy(out_str, s_cfg.ntp_server, str_sz); return true; }
     return false;
@@ -761,6 +777,7 @@ bool pda_settings_set(const char *key, double num, bool is_bool, bool bool_val, 
     else if (!strcmp(key, "ui.onscreen_keyboard_auto")) { s_cfg.onscreen_keyboard_auto = is_bool ? bool_val : (num != 0); }
     else if (!strcmp(key, "ui.cursor")) { if (!str) return false; strlcpy(s_cfg.cursor_style, str, sizeof(s_cfg.cursor_style)); }
     else if (!strcmp(key, "ui.accent")) { if (!str) return false; strlcpy(s_cfg.accent, str, sizeof(s_cfg.accent)); }
+    else if (!strcmp(key, "net.wifi_enabled")) { if (!is_bool) return false; s_cfg.wifi_enabled = bool_val; }
     else if (!strcmp(key, "locale.timezone")) { if (!str) return false; strlcpy(s_cfg.timezone, str, sizeof(s_cfg.timezone)); }
     else if (!strcmp(key, "locale.ntp_server")) { if (!str) return false; strlcpy(s_cfg.ntp_server, str, sizeof(s_cfg.ntp_server)); }
     else return false;

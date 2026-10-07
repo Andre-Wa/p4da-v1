@@ -42,6 +42,12 @@ const char *wifi_net_ssid(void);
 /** M5.2: senha salva p/ o ssid (NULL se não salvo) — UI conecta direto. */
 const char *wifi_net_saved_pass(const char *ssid);
 
+/** M5.3: chave de rádio. set_enabled_boot ANTES de wifi_net_init (sem
+ *  tocar rádio); set_enabled em runtime liga/desliga (stop/start). */
+void wifi_net_set_enabled_boot(bool on);
+void wifi_net_set_enabled(bool on);
+bool wifi_net_enabled(void);
+
 typedef struct {
     char ssid[33];
     int  rssi;

@@ -71,3 +71,29 @@ Comportamento:
   de senha); rede nova pede senha e, ao conectar, entra na lista
   (máx. 8; o arquivo é reescrito com a lista completa).
 - Standby pausa tudo como antes; o resume reconecta a rede corrente.
+
+## Gerenciador de conexão scan-driven (M5.3, 2026-10-06)
+
+Fluxo (inspirado no Android, pedido do usuário na validação da v5.2):
+1. scan (bloqueante, na task `wifi_rcn`) → 2. lista de redes presentes →
+3. melhor rede SALVA presente (RSSI) → 3.1 até TRY_BUDGET=3 tentativas
+(backoff 2/4/8/16/30 s na mesma rede) → 4. conectou: fluxo normal
+(NTP etc.) → 5. erro contínuo ou AUTH_FAIL×3: marca a rede e volta ao
+passo 1 p/ a próxima salva presente → 6. nenhuma salva presente:
+`nenhuma rede salva presente — Wi-Fi em espera até ação manual`
+(sem martelo; acordam: toggle, connect manual, rescan da tela Redes,
+resume do standby — que também limpa as marcas do ciclo).
+
+AUTH_FAIL espúrio (rede BOA que vacila) não rota mais na 1ª falha: são
+3 tentativas na mesma rede antes de marcar (`AUTH_FAIL (reason N) em
+"X": tentativa n/3`); o caso do log de 2026-10-05 (F3 correta marcada
+por um 202 isolado) não se repete.
+
+## Chave de rádio (M5.3)
+
+`net.wifi_enabled` no system.lua + SwitchRow "Wi-Fi ligado (radio)" em
+Config → Redes: OFF = `esp_wifi_stop()` (C6 libera o rádio); ON =
+`esp_wifi_start()` → STA_START → fluxo de scan. Persiste em NVS
+(`wifion`). Sem wifi.lua E chave ON: comportamento antigo (offline,
+scan disponível em Redes). Conectar por Redes com a chave OFF liga o
+rádio automaticamente.

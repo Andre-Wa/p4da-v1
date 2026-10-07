@@ -21,6 +21,10 @@ return {
     ntp_server = "pool.ntp.org",   -- usado a partir da fase Wi-Fi (M4)
   },
 
+  net = {
+    wifi_enabled = true,        -- M5.3: radio on/off pela tela Config
+  },
+
   ui = {
     onscreen_keyboard_auto = true, -- teclado virtual aparece só sem teclado USB
     accent = "cyan",               -- M5.0: cyan | violet | green | amber | pink

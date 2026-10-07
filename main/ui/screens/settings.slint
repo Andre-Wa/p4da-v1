@@ -62,6 +62,12 @@ export component SettingsScreen inherits Rectangle {
     in-out property <float> deep-s: 0;
     in-out property <bool> wake-touch: false;
     in-out property <bool> boot-standby: false;
+    in-out property <bool> wifi-on: true;
+    callback set-wifi-on(bool);
+    // M5.3.2: efeito IMEDIATO + persistência imediata (como o seletor de
+    // cursor); sem isto a chave só valeria no botão Salvar e "sumia" ao
+    // sair da tela (relato da 11ª rodada).
+    changed wifi-on => { root.set-wifi-on(root.wifi-on); }
     in-out property <bool> osk-auto: true;
     in-out property <bool> light-sleep: false;
     in property <string> store-info;
@@ -188,7 +194,8 @@ export component SettingsScreen inherits Rectangle {
             if root.tab == 3: VerticalLayout {
                 spacing: Theme.sp-md;
                 Text { text: "Wi-Fi: " + root.wifi-info; color: Theme.on-surface; font-size: Theme.type-body; }
-                TonalButton { width: 200px; text: "Abrir tela de redes"; clicked => { root.open-networks(); } }
+                SwitchRow { label: "Wi-Fi ligado (radio)"; value <=> root.wifi-on; }
+                TonalButton { width: 180px; text: "Abrir tela de redes"; clicked => { root.open-networks(); } }
                 Text {
                     text: "Credenciais em config/wifi.lua (SSID, senha, auto_connect).";
                     font-size: Theme.type-tiny;
@@ -199,7 +206,7 @@ export component SettingsScreen inherits Rectangle {
 
             if root.tab == 4: VerticalLayout {
                 spacing: Theme.sp-sm;
-                Text { text: "PDA p4da — M5.2"; color: Theme.on-surface; font-size: Theme.type-title; font-weight: 700; }
+                Text { text: "PDA p4da — M5.3.2"; color: Theme.on-surface; font-size: Theme.type-title; font-weight: 700; }
                 Text { text: "Placa: GUITION JC4880P443C_I_W (ESP32-P4 + C6)"; color: Theme.on-surface-var; font-size: Theme.type-label; }
                 Text { text: "IDF 5.5.1 · Slint 1.12.1 · Lua 5.5 · ESP-Hosted 2.12.9"; color: Theme.on-surface-var; font-size: Theme.type-label; }
                 Text { text: "Ícones: Material Icons (Apache-2.0) · Fonte: PDA Mono 400/700 (Apache-2.0)"; color: Theme.on-surface-var; font-size: Theme.type-label; wrap: word-wrap; }

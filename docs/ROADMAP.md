@@ -693,7 +693,41 @@ Itens A1–A5 de `docs/REVIEW_PRE_M5.md`:
       `board_touch_init` tenta 5× (80 ms entre; `i2c_master_bus_reset`
       a partir da 3ª) antes de falhar fatal.
 
-### M5.2 — Multi-redes salvas (FEITO; aguardando hardware)
+### M5.3 — Gerenciador scan-driven + chave de rádio (FEITO; aguardando hardware)
+Redesenho pedido pelo usuário na validação da v5.2 (rotação ansiosa
+marcava rede BOA por AUTH_FAIL espúrio — log de 2026-10-05/06):
+- [x] Fluxo Android-like: scan → melhor salva presente (RSSI) → até 3
+      tentativas na mesma rede → rota → espera sem martelo se nenhuma
+      presente (`nenhuma rede salva presente — Wi-Fi em espera…`).
+- [x] AUTH_FAIL só marca a rede após 3 hits (`tentativa n/3` no log);
+      NO_AP_FOUND roda o scan já; resume/toggle/connect/rescan limpam o
+      ciclo.
+- [x] Chave `net.wifi_enabled` (system.lua + NVS `wifion`) + SwitchRow
+      "Wi-Fi ligado (radio)" em Config → Redes; OFF = esp_wifi_stop;
+      ON = start + fluxo de scan; conectar por Redes liga o rádio.
+- [x] hosttest T1–T8 (pegou buffer 1024→1536 do serialize e ordem de
+      argumentos da seção net — self-test FALHOU no host ANTES do HW,
+      como projetado); slint limpo; md_test 24/24; cheque uso-vs-definição
+      sem alertas.
+- [x] Sobre = "M5.3".
+- [x] **M5.3.2 (11ª rodada)**: SwitchRow do rádio com efeito/persistência
+      IMEDIATOS (`changed wifi-on =>` → handler que salva e liga/desliga;
+      antes a propriedade só valeria no botão Salvar e "sumia" ao sair da
+      tela); scan com rádio OFF falha limpo (`ESP_ERR_INVALID_STATE`) e a
+      tela Redes avisa `[wifi] rádio desligado — ligue em Config > Redes`
+      em vez de RPC 12290 do hosted; conectar por Redes com rádio OFF
+      sincroniza o switch (`set_cfg_wifi_on(true)`); pilha da `wifi_rcn`
+      4096→6144 (HWM de 1960 B livres durante scan).
+- [x] Sobre = "M5.3.2".
+- **Aceite HW**: AP atual desligado → 3 tentativas? NÃO: NO_AP_FOUND roda
+      direto p/ scan e troca (log `escolhida por scan`); senha errada
+      proposital → `tentativa 1/3…2/3…3/3` e só então marca/rota; AUTH_FAIL
+      isolado em rede boa → retenta a MESMA e conecta; todas ausentes →
+      linha de espera única, sem loop; chave OFF some com o rádio
+      (status offline, sem eventos), ON reconecta via scan; reboot mantém
+      a chave.
+
+### M5.2 — Multi-redes salvas (FEITO; ✅ VALIDADO EM HARDWARE 2026-10-06, 10ª rodada)
 - [x] `config/wifi.lua` com lista `networks = { {ssid,password}, … }`
       (máx. 8; legado de ssid único ainda lido); serialização da lista
       no save; upsert ao conectar pela tela.

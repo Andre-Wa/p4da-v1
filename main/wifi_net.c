@@ -43,6 +43,13 @@ static saved_net_t s_nets[MAX_SAVED];
 static int s_nets_n = 0;
 static int s_cur = -1;        /* índice em tentativa */
 static int s_last_good = 0;   /* última conectada (ponto de partida) */
+/* M5.3 (fluxo Android): orçamento de tentativas POR rede antes de
+ * rotacionar; scan dirige a escolha; espera sem martelo se nenhuma
+ * salva estiver presente; chave de rádio on/off pela UI. */
+#define TRY_BUDGET 3
+static uint8_t s_auth_hits[MAX_SAVED];
+static int s_attempts = 0;
+static bool s_enabled = true;
 static bool s_sntp_on = false;
 static char s_ssid[33] = { 0 };
 static char s_pass[65] = { 0 };
@@ -177,10 +184,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
     switch (id) {
     case WIFI_EVENT_STA_START:
         ESP_LOGI(TAG, "STA up (ssid=%s)", s_ssid[0] ? s_ssid : "-");
-        if (s_auto && s_nets_n) {
-            apply_saved(s_last_good < s_nets_n ? s_last_good : 0);
-            esp_wifi_connect();
-        }
+        if (s_recon_task) xTaskNotifyGive(s_recon_task);   /* M5.3: scan primeiro */
         break;
     case WIFI_EVENT_STA_DISCONNECTED:
         if (s_connected) {
@@ -198,17 +202,30 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
          * (marca noap). Com uma rede só, comporta como antes. */
         const wifi_event_sta_disconnected_t *disc =
             (const wifi_event_sta_disconnected_t *)data;
-        if (disc && s_cur >= 0 &&
-            (disc->reason == WIFI_REASON_AUTH_FAIL ||
-             disc->reason == WIFI_REASON_HANDSHAKE_TIMEOUT ||
-             disc->reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT)) {
-            s_nets[s_cur].bad = 1;
-            ESP_LOGW(TAG, "AUTH_FAIL (reason %d) em \"%s\": senha errada? "
-                          "rotacionando p/ próxima rede salva",
-                     (int)disc->reason, s_nets[s_cur].ssid);
-        } else if (disc && s_cur >= 0 &&
-                   disc->reason == WIFI_REASON_NO_AP_FOUND) {
-            s_nets[s_cur].noap = 1;
+        const int r = disc ? (int)disc->reason : 0;
+        const bool auth = (r == WIFI_REASON_AUTH_FAIL ||
+                           r == WIFI_REASON_HANDSHAKE_TIMEOUT ||
+                           r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT);
+        if (s_cur >= 0 && auth) {
+            /* M5.3: AUTH_FAIL espúrio acontece (rede boa!); só marca a
+             * rede após TRY_BUDGET falhas de auth na mesma rede. */
+            s_auth_hits[s_cur]++;
+            if (s_auth_hits[s_cur] >= TRY_BUDGET) {
+                s_nets[s_cur].bad = 1;
+                ESP_LOGW(TAG, "AUTH_FAIL x%d em \"%s\": senha errada? "
+                              "rede marcada p/ este ciclo",
+                         (int)s_auth_hits[s_cur], s_nets[s_cur].ssid);
+            } else {
+                ESP_LOGW(TAG, "AUTH_FAIL (reason %d) em \"%s\": "
+                              "tentativa %d/%d na mesma rede",
+                         r, s_nets[s_cur].ssid,
+                         (int)s_auth_hits[s_cur], TRY_BUDGET);
+            }
+        } else if (s_cur >= 0 && r == WIFI_REASON_NO_AP_FOUND) {
+            s_nets[s_cur].noap = 1;      /* some do scan: roda já */
+            s_attempts = TRY_BUDGET;
+        } else {
+            s_attempts++;                /* falha genérica conta p/ roda */
         }
         if (s_auto && s_recon_task) xTaskNotifyGive(s_recon_task);
         break;
@@ -224,9 +241,11 @@ static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         s_connected = true;
         s_backoff_s = 0;      /* M5.0b: conectou zera backoff */
+        s_attempts = 0;       /* M5.3: e o orçamento de tentativas */
         if (s_cur >= 0) {     /* M5.2: rede atual volta a ser confiável */
             s_nets[s_cur].bad = 0;
             s_nets[s_cur].noap = 0;
+            s_auth_hits[s_cur] = 0;
             s_last_good = s_cur;
         }
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&e->ip_info.ip));
@@ -248,6 +267,33 @@ static void apply_saved(int i)
     cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
     esp_wifi_set_config(WIFI_IF_STA, &cfg);
     ESP_LOGI(TAG, "rede salva %d/%d: \"%s\"", i + 1, s_nets_n, s_nets[i].ssid);
+}
+
+/* M5.3: escolha dirigida por SCAN (passo 1-3 do fluxo pedido): varre
+ * bloqueante no contexto da recon_task e devolve a rede salva PRESENTE
+ * de melhor RSSI (não-bad). -1 = nenhuma presente; -2 = scan ocupado.
+ * Efeito colateral bom: rede que voltou limpa o próprio noap. */
+static int scan_pick_best(int *out_rssi)
+{
+    wifi_ap_record_t *aps = (wifi_ap_record_t *)malloc(sizeof(wifi_ap_record_t) * 32);
+    if (!aps) return -1;
+    uint16_t n = 32;
+    if (esp_wifi_scan_start(NULL, true) != ESP_OK) { free(aps); return -2; }
+    if (esp_wifi_scan_get_ap_records(&n, aps) != ESP_OK) n = 0;
+    int best = -1, best_rssi = -128;
+    for (int k = 0; k < s_nets_n; k++) {
+        if (s_nets[k].bad) continue;
+        for (uint16_t a = 0; a < n; a++) {
+            if (!strcmp((const char *)aps[a].ssid, s_nets[k].ssid)) {
+                s_nets[k].noap = 0;
+                if (aps[a].rssi > best_rssi) { best_rssi = aps[a].rssi; best = k; }
+                break;
+            }
+        }
+    }
+    free(aps);
+    if (out_rssi) *out_rssi = best_rssi;
+    return best;
 }
 
 /* próxima candidata: prefere !bad && !noap girando a partir de s_cur;
@@ -276,23 +322,38 @@ static void recon_task(void *arg)
     (void)arg;
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        if (!s_auto || s_paused || s_connected || !s_nets_n) continue;
-        const int idx = pick_next();
-        if (idx < 0) {
-            ESP_LOGW(TAG, "todas as redes salvas falharam (auth) — "
-                          "reconexão suspensa até ação em Redes");
+        if (!s_enabled || s_paused || s_connected || !s_auto || !s_nets_n)
             continue;
+        /* M5.3: dentro do orçamento, insiste na MESMA rede (transiente/
+         * auth<3); esgotou ou AP sumiu → scan e melhor presente. */
+        const bool stay = s_cur >= 0 && !s_nets[s_cur].bad &&
+                          !s_nets[s_cur].noap && s_attempts < TRY_BUDGET;
+        int idx = -1, rssi = 0;
+        if (stay) {
+            idx = s_cur;
+        } else {
+            idx = scan_pick_best(&rssi);
+            if (idx == -2) {
+                ESP_LOGI(TAG, "scan ocupado — reavaliando em 5 s");
+                vTaskDelay(pdMS_TO_TICKS(5000));
+                xTaskNotifyGive(s_recon_task);
+                continue;
+            }
+            if (idx < 0) {
+                ESP_LOGW(TAG, "nenhuma rede salva presente — Wi-Fi em "
+                              "espera até ação manual (Redes/chave/rescan)");
+                continue;
+            }
         }
-        /* M5.0b+fix: escada 2/4/8/16/30 na MESMA rede; rede nova = 2 s. */
-        s_backoff_s = (idx == s_cur)
+        s_backoff_s = (idx == s_cur && s_attempts)
             ? (s_backoff_s ? (s_backoff_s * 2 > 30 ? 30 : s_backoff_s * 2) : 2)
             : 2;
-        ESP_LOGI(TAG, "desconectado — reconexão em %d s (backoff) rede \"%s\"",
-                 s_backoff_s, s_nets[idx].ssid);
+        ESP_LOGI(TAG, "reconexão em %d s — rede \"%s\" (tentativa %d/%d%s)",
+                 s_backoff_s, s_nets[idx].ssid, s_attempts + 1, TRY_BUDGET,
+                 stay ? "" : ", escolhida por scan");
         vTaskDelay(pdMS_TO_TICKS((uint32_t)s_backoff_s * 1000U));
-        if (!s_auto || s_paused || s_connected)
-            continue;   /* standby no meio do backoff: não gasta rádio */
-        if (idx != s_cur) apply_saved(idx);
+        if (!s_enabled || s_paused || s_connected) continue;
+        if (idx != s_cur) { apply_saved(idx); s_attempts = 0; }
         esp_wifi_connect();
     }
 }
@@ -327,6 +388,11 @@ static void wifi_task(void *arg)
     cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(WIFI_IF_STA, &cfg);
+    if (!s_enabled) {   /* M5.3: chave OFF = rádio não sobe no boot */
+        ESP_LOGI(TAG, "Wi-Fi desligado (chave) — rádio não sobe");
+        vTaskDelete(NULL);
+        return;
+    }
     if (esp_wifi_start() != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_start falhou");
         wifi_net_on_event_ui(false, 0);
@@ -336,6 +402,30 @@ static void wifi_task(void *arg)
     ESP_LOGI(TAG, "Wi-Fi inicializado (host P4 <-> C6 via SDIO)");
     vTaskDelete(NULL);
 }
+
+void wifi_net_set_enabled_boot(bool on) { s_enabled = on; }  /* pré-init */
+
+void wifi_net_set_enabled(bool on)
+{
+    if (on == s_enabled) return;
+    s_enabled = on;
+    if (!on) {
+        ESP_LOGI(TAG, "Wi-Fi desligado pela chave (Config)");
+        esp_wifi_disconnect();
+        esp_wifi_stop();
+        wifi_net_on_event_ui(false, 0);
+    } else {
+        ESP_LOGI(TAG, "Wi-Fi ligado pela chave (Config)");
+        for (int i = 0; i < s_nets_n; i++) {
+            s_nets[i].bad = 0; s_nets[i].noap = 0; s_auth_hits[i] = 0;
+        }
+        s_attempts = 0; s_backoff_s = 0;
+        esp_wifi_set_mode(WIFI_MODE_STA);
+        esp_wifi_start();   /* STA_START -> recon_task -> scan */
+    }
+}
+
+bool wifi_net_enabled(void) { return s_enabled; }
 
 void wifi_net_seed_clock(void)
 {
@@ -354,7 +444,7 @@ void wifi_net_seed_clock(void)
 esp_err_t wifi_net_init(void)
 {
     if (!load_wifi_lua()) return ESP_ERR_NOT_FOUND;
-    xTaskCreate(recon_task, "wifi_rcn", 4096, NULL, 3, &s_recon_task);
+    xTaskCreate(recon_task, "wifi_rcn", 6144, NULL, 3, &s_recon_task);  /* M5.3.2: era 4096; HWM de 1960 B livres no scan (11ª rodada) */
     BaseType_t ok = xTaskCreate(wifi_task, "wifi_net", 8192, NULL, 4, NULL);
     return (ok == pdPASS) ? ESP_OK : ESP_FAIL;
 }
@@ -387,6 +477,12 @@ void wifi_net_pause(void)
 void wifi_net_resume(void)
 {
     s_paused = false;
+    /* M5.3: acordar = ciclo novo: redes marcadas voltam a concorrer
+     * (APs podem ter voltado; blacklist não sobrevive ao standby). */
+    for (int i = 0; i < s_nets_n; i++) {
+        s_nets[i].bad = 0; s_nets[i].noap = 0; s_auth_hits[i] = 0;
+    }
+    s_attempts = 0;
     if (s_sntp_on) {
         /* M4.14.2: sntp_restart() é NO-OP com o serviço parado (lwIP
          * 5.5.1, sntp.c: só restarta se enabled — bug achado no log da
@@ -447,11 +543,20 @@ static void scan_task(void *arg)
     }
     if (cb) cb(out, n, ctx);
     free(out);
+    /* M5.3: rescan da tela Redes = intervenção manual: reavalia o
+     * manager (acorda o modo "nenhuma rede presente"). */
+    if (s_recon_task) xTaskNotifyGive(s_recon_task);
     vTaskDelete(NULL);
 }
 
 esp_err_t wifi_net_scan(wifi_net_scan_cb cb, void *ctx)
 {
+    /* M5.3.2: rádio parado => scan era RPC inválido no C6 (resp 12290
+     * no log da 11ª rodada); falha limpo em vez de martelar o hosted. */
+    if (!s_enabled) {
+        ESP_LOGW(TAG, "scan pedido com rádio desligado — ignora");
+        return ESP_ERR_INVALID_STATE;
+    }
     void **ctxs = (void **)malloc(2 * sizeof(void *));
     if (!ctxs) return ESP_ERR_NO_MEM;
     ctxs[0] = (void *)(uintptr_t)cb;
@@ -498,6 +603,7 @@ esp_err_t wifi_net_save_config(const char *ssid, const char *pass)
 
 esp_err_t wifi_net_connect(const char *ssid, const char *pass, bool save)
 {
+    if (!s_enabled) wifi_net_set_enabled(true);   /* M5.3: conectar liga */
     /* M5.2: upsert na lista de salvas (ação do usuário limpa flags). */
     int idx = -1;
     for (int k = 0; k < s_nets_n; k++)
