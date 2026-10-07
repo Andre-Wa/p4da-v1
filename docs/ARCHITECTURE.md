@@ -71,3 +71,20 @@ teclado virtual (M2), editor com cursor/scroll horizontal (M2), remontagem
 hot-plug do SD (M3), Wi-Fi/BT/NTP/OTA (M4), áudio/player (M5), apps
 Agenda/Contatos/Relógio (M6). Botões cinzas no launcher = contrato visual do
 roadmap (`docs/ROADMAP.md`).
+
+## Princípios confirmados na revisão pré-M5 (NÃO mexer sem medição)
+
+- **LittleFS** (não SPIFFS): SPIFFS depreciado/lento; LittleFS
+  fail-safe + wear leveling + dirs. Fonte: [4][5]. Nossa partição
+  `storage` usa subtype 0x82 (rótulo "spiffs" no csv) — mount é por
+  LABEL, funciona; renomear o rótulo no csv é cosmético e exige
+  reflash completo: deixar como está, documentado.
+- **Slint 1.12.1 pinado** (bloat de glifos no 1.18) — revisitado só com
+  mudança de IDF/fontes.
+- **Standby robusto + kill-switch do light sleep** até o rework M-power.
+- **Sombra NVS + censo/FNV + self-test do parser** (pegaram mídia
+  insana e o bug de ABI do lua).
+- **Transições de estado assinadas** (`pwr: X -> Y`): acharam 2 bugs
+  reais (NTP no-op, churn do DIM) — manter e estender p/ Wi-Fi (A1).
+- **Render offscreen como juiz antes do HW** (achou o bug do prompt que
+  3 rounds de conjectura não acharam).

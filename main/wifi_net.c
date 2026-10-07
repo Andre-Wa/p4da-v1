@@ -145,7 +145,7 @@ static void copy_wifi_str(char *dst, size_t cap, const char *src)
 extern void wifi_net_on_event_ui(bool connected, int rssi);  /* main.cpp */
 
 /* M5.2: forward p/ o handler de STA_START (definição após os eventos,
- * junto de pick_next/recon_task). */
+ * junto de recon_task). */
 static void apply_saved(int i);
 
 static void sntp_synced(struct timeval *tv)
@@ -296,27 +296,6 @@ static int scan_pick_best(int *out_rssi)
     return best;
 }
 
-/* próxima candidata: prefere !bad && !noap girando a partir de s_cur;
- * sem nenhuma, limpa os noap (APs podem ter voltado) e aceita !bad;
- * todas bad (senhas) => -1 = suspende até ação do usuário. */
-static int pick_next(void)
-{
-    for (int k = 1; k <= s_nets_n; k++) {
-        int i = (s_cur + k) % s_nets_n;
-        if (!s_nets[i].bad && !s_nets[i].noap) return i;
-    }
-    bool any_noap = false;
-    for (int i = 0; i < s_nets_n; i++) if (s_nets[i].noap) any_noap = true;
-    if (any_noap) {
-        for (int i = 0; i < s_nets_n; i++) s_nets[i].noap = 0;
-        for (int k = 1; k <= s_nets_n; k++) {
-            int i = (s_cur + k) % s_nets_n;
-            if (!s_nets[i].bad) return i;
-        }
-    }
-    return -1;
-}
-
 static void recon_task(void *arg)
 {
     (void)arg;
@@ -463,7 +442,7 @@ const char *wifi_net_saved_pass(const char *ssid)
  * A associação Wi-Fi VIVE durante o standby robusto (CPU viva); o que
  * pausa é o loop de reconexão e o poll do NTP — era o que logava
  * "desconectado — reconectando em 2 s" DENTRO do standby. Modem-sleep
- * do C6 (esp_hosted power save) é o próximo estágio (POWER_REWORK). */
+ * do C6 (esp_hosted power save) é o próximo estágio (POWER.md § estágios). */
 void wifi_net_pause(void)
 {
     s_paused = true;

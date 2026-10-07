@@ -185,3 +185,10 @@ regressões de cursor/OSK antes de flashar. O `main.cpp` do harness é
 | `main/ui/app_ui.slint` | `default-font-family: "PDA Mono"` + âncora de charset |
 | `main/ui/screens/editor.slint` | imports das faces + `cell` (avanço) |
 | `tools/render_offscreen.sh` | build+render do harness no host |
+
+## 7. Itálico (wishlist prio 3) — ADIADO por decisão do usuário (2026-10-05)
+
+Caminho quando voltar: `--italic-src` no pipeline (Roboto Mono Italic,
+Apache-2.0) + terceira família no runtime + kinds de run itálico no
+`md_render.h` + faces no editor. Não é "fácil": mexe em charset/âncora,
+orçamento de flash e no contrato de avanço 0.600em.

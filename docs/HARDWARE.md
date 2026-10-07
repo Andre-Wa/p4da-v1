@@ -163,3 +163,13 @@ periférico (`sdmmc_card_init failed` no hosted, `0x107` no cartão e
 leituras corrompidas de `system.lua` disparando a "cura" a cada boot).
 `storage_init.c` fixa `host.slot = 0`. Se um dia o SD ou o Wi-Fi
 "morrerem" juntos, suspeite disso primeiro.
+
+## GT911: NACK no primeiro I2C do warm boot (M5.1.1, 2026-10-05)
+
+Após RESET quente, o GT911 às vezes não responde ao primeiro
+`esp_lcd_touch_new_i2c_gt911` (NACK; `TouchPad_ID 0x00,0x00,0x00`), e o
+`ESP_ERROR_CHECK` do boot abortava (crash-report de 2026-10-05). Sem
+pino de reset controlado (RST/INT em NC de propósito, ver achado #2),
+a cura é retry: 5 tentativas, 80 ms entre, `i2c_master_bus_reset` da
+3ª em diante (`board_touch_init`). Se um boot logar
+`GT911 tentativa N/5`, o retry pagou seu salário.

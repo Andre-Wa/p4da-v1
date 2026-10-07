@@ -121,3 +121,21 @@ editor. Licenças: Apache-2.0 (Roboto Mono) / OFL (alternativas).
 `default-font-family: "PDA Mono"` a query resolve nos imports do .slint
 (faces custom carregadas antes da query) — independente do host. Ver
 docs/UI.md §Fontes e docs/FONTES.md.
+
+## Limitações do Slint 1.12 encontradas em campo (2026-10)
+
+1. **Globals inacessíveis do C++**: nenhum `global<Theme>()` no código
+   gerado; propriedades de global só mudam via binding/callback dentro
+   do .slint (M5.0 usou `init`/`changed` no AppWindow).
+2. **TouchArea sem callbacks pressed/released**: só a propriedade
+   `pressed` — usar property-espelho + `changed` (M4.16.1, KeyCap).
+3. **Timer**: callback é `triggered`; controle por `running` (não há
+   start()/stop() nem `tick`) — M4.16.1.
+4. **Layouts**: uma fileira DEPOIS de um irmão de altura fixa dentro de
+   VerticalLayout foi mispositioned p/ fora do diálogo (botões do
+   prompt sumiam, M4.16.2, provado por bisseção de render). Regra:
+   geometria absoluta p/ fileiras críticas; auditar `if`/alturas fixas
+   em layouts (suspeitos listados no ROADMAP M5.0b/A5).
+5. **`if` em layout + irmãos posteriores**: mesmo family do item 4 —
+   o campo do prompt virou Rectangle incondicional (altura 0/visible)
+   p/ eliminar a variável.

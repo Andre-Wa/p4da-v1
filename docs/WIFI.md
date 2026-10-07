@@ -97,3 +97,10 @@ Config → Redes: OFF = `esp_wifi_stop()` (C6 libera o rádio); ON =
 (`wifion`). Sem wifi.lua E chave ON: comportamento antigo (offline,
 scan disponível em Redes). Conectar por Redes com a chave OFF liga o
 rádio automaticamente.
+
+## Ruído de log aceito (não é bug)
+
+`RPC_WRAP`/`H_API` durante ciclos de reconexão; `--- ERROR: device
+reports readiness…` do USB-Serial-JTAG dormindo; `STA up (ssid=-)` antes
+do primeiro apply. Reduzir verbosidade do hosted fica p/ quando o
+modem-sleep do C6 entrar (POWER.md § estágios).

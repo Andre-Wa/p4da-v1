@@ -16,17 +16,30 @@ reescreve este arquivo ao salvar; editar à mão no cartão também vale
 return {
   display = { brightness = 80 },
   power   = { dim_after_s = 30, screen_off_after_s = 120,
-              deep_sleep_after_s = 0, wake_on_touch = false },
+              deep_sleep_after_s = 0, wake_on_touch = false,
+              boot_btn_standby = false },
   locale  = { timezone = "America/Sao_Paulo", ntp_server = "pool.ntp.org" },
-  ui      = { onscreen_keyboard_auto = true },
+  net     = { wifi_enabled = true },
+  ui      = { onscreen_keyboard_auto = true, accent = "cyan",
+              cursor = "bar" },
 }
 ```
 
 Chaves aceitas (as mesmas da API `pda.settings.*`):
 `display.brightness`, `power.dim_after_s`, `power.screen_off_after_s`,
-`power.deep_sleep_after_s`, `power.wake_on_touch`, `power.light_sleep`, `locale.timezone`,
-`locale.ntp_server`, `ui.onscreen_keyboard_auto`, `ui.accent` (cyan|violet|green|amber|pink; sanitize p/ cyan), `ui.cursor`
-(`"bar"` | `"under"` | `"block"` — glifo do cursor do editor).
+`power.deep_sleep_after_s`, `power.wake_on_touch` (M4.14.2: gateia SÓ o
+wake do STANDBY por toque; toque como atividade é sempre ativo),
+`power.boot_btn_standby` (M4.14.4: BOOT em ACTIVE/DIM pede standby),
+`power.light_sleep`, `locale.timezone`, `locale.ntp_server`,
+`net.wifi_enabled` (M5.3: rádio on/off; NVS `wifion`),
+`ui.onscreen_keyboard_auto`, `ui.accent` (M5.0: cyan|violet|green|amber|pink;
+sanitize p/ cyan), `ui.cursor` (`"bar"` | `"under"` | `"block"` — glifo do
+cursor do editor).
+
+Regras de ordenação (clamp silencioso, `clamp_all`): `screen_off ≥ dim+5`;
+`deep ≠ 0 ⇒ deep ≥ screen_off+10` (caso real: deep=40 c/ off=56 virou 66);
+a UI ecoa os valores clampados desde a M5.0b. O formato de
+`config/wifi.lua` (lista de redes, M5.2) mora em `docs/WIFI.md`.
 
 ## 2. Pequenos programas — `scripts/*.lua`
 

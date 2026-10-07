@@ -114,7 +114,7 @@ Observações do hardware que viram tarefa aqui:
    avaliar `host-power-save` do esp_hosted para modem-sleep do C6.
    **FEITO M4.14** (pause/resume via standby_cb; `esp_sntp_stop`/
    `sntp_restart`); modem-sleep do C6 fica p/ o próximo estágio
-   (`docs/POWER_REWORK.md` §4).
+   (§ Pesquisa e plano em estágios, abaixo).
 3. **Botão BOOT como wake explícito.** O ISR de GPIO35 já é instalado no
    init e dá o semáforo — validar na placa (e conferir se alguma
    reconfiguração de GPIO posterior não mata o `intr_type`).
@@ -165,3 +165,125 @@ Meditation → reset em loop. Defesas adicionadas (todas em `pda_config.c`
 cheque explícito de `isfinite` (NaN escapa de `<`/`>`), `apply_ui_scale`
 re-clampa na entrada. **Regra geral: qualquer número que venha de arquivo
 ou de binding Slint e vire geometria deve ser validado com `isfinite`.**
+
+## Pesquisa e plano em estágios do rework (fundido de POWER_REWORK.md em 2026-10-06)
+
+Status desde a redação original: M4.14/M4.15/M5.0b consumiram parte do
+Estágio 1 (pause Wi-Fi/NTP, GT911 sleep, retry fix); C6-off no hibernate
+REVERTIDO (force-hold unsafe no P4, ver M4.15/M5 no ROADMAP); DFS/`esp_pm`
+e teardown do painel seguem ADIADOS até o Estágio 0 (medição).
+
+## 2. Para onde vai a energia (hipóteses NÃO medidas)
+
+### 2.1 STANDBY robusto (suspeitas, em ordem provável)
+backlight 0 já é o maior alívio; restam: CPU 360 MHz sem DFS (§3.5),
+painel ST7701S + DSI PHY alimentados (blank ≠ off), GT911 scanning
+(~3,5 mA típicos), C6 com modem ativo + loop de reconexão, rail do SD
+(LDO ch4) ligado, VBUS do USB host, PSRAM XIP.
+
+### 2.2 HIBERNATE (vizinhança manda)
+O P4 some (µA), mas a placa não: **C6 com CHIP_PU preso em pull-up**
+(receita do issue 18443: GPIO54 baixo + `gpio_force_hold_all` antes do
+sleep), GT911 acordado (3,5 mA → <50 µA com comando de sleep), rail do
+painel/DSI se não desligado, ES8311, quiescente do IP5306. Lição do 18443:
+número de datasheet é do chip nu; em devboard, os vizinhos definem o piso
+—"the dev board is simply not designed with deep sleep in mind".
+
+## 3. Pesquisa (achados + fontes)
+
+**3.1 Deep sleep no P4.** Wake por GPIO só no domínio VDD_LP (LP =
+GPIO0–15 aqui); por default o sleep ISOLA os GPIOs — vizinhos com pull-up
+externo podem vazar; reter com `gpio_hold_en`/`gpio_force_hold_all`.
+C6: GPIO54 (Slave_Reset) baixo antes do sleep segura-o off. [1][5]
+
+**3.2 GT911 tem sleep de verdade.** Comando I2C `0x05` no registro
+`0x8040` (requer INT baixo antes do comando); 3,5 mA → <50 µA; existe
+também doze/gesture mode p/ wake-on-touch em produtos de bateria.
+No STANDBY com `wake_on_touch=false`, dormir o GT911 é ganho líquido
+imediato; com `=true`, avaliar doze mode. [6][7][8]
+
+**3.3 IP5306 corta saída em carga baixa** (~45–60 mA, ~30 s, sem USB) —
+auto-desligue de power bank; a variante I2C permitiria configurar, mas a
+nossa NÃO tem I2C (HARDWARE.md achado #3) → não dá p/ desligar o
+auto-off por software; projeta-se em volta: hibernate="off" é feature;
+medir o STANDBY otimizado p/ garantir que fica ACIMA do limiar na bateria
+(ou aceitar o corte como power-off acidental? decisão §5). [9][10][11]
+
+**3.4 Wi-Fi/NTP pausáveis no standby** (M4.14#2): `wifi_net_pause/resume`
++ parar timer SNTP; reconexão retoma no wake. Ganho direto no C6.
+
+**3.5 `esp_pm_configure()` liga DFS + auto-light-sleep.** Sem ele,
+`CONFIG_PM_ENABLE` não escala frequência nem dorme sozinho. Chamá-lo
+(após o bring-up) + auditoria de locks (DSI video-mode e o tick do Slint
+podem pedir lock de freq) = ganho "grátis" em idle/DIM/standby robusto.
+Risco baixo/médio; medir antes/depois. [1]
+
+**3.6 ESP-Hosted power save existe**: o componente 2.12.9 registra o CLI
+`host-power-save` no nosso boot; o exemplo `host_network_split__power_save`
+(esp-hosted-mcu) documenta o lifecycle (slave só dorme com o bus SDIO
+ocioso, hooks no lifecycle do host). API exata do host IDF a confirmar no
+`managed_components` da sua máquina (grep `power_save` nos headers do
+componente). Efeito esperado: modem-sleep do C6 durante standby. [12]
+
+**3.7 Painel: blank ≠ off.** Opções em custo/crescente: (a) comando
+de sleep do ST7701S via DSI (chechar BSP/datasheet do painel); (b) tear-down
+completo (LDO ch3 off + deinit DSI) com re-init de 0,3–0,5 s no wake — já
+mapeado no POWER.md como otimização pós-medição. [2][4]
+
+## 4. Plano em estágios (proposta p/ M4.14 → M-power)
+
+**Estágio 0 — MEDIR** (amperímetro em série no cabo da bateria/CN4):
+ACTIVE 100/50/10, DIM, STANDBY, HIBERNATE; 3 amostras cada. Sem isso,
+otimizamos no escuro (plano já existe no POWER.md; agora é porta de
+entrada de todo o resto).
+
+**Estágio 1 — software de baixo risco (M4.14):** pausar Wi-Fi/NTP no
+standby; dormir o GT911 no standby quando `!wake_on_touch`; no HIBERNATE:
+GPIO54 baixo + force-hold (C6 off) e GT911 sleep; `esp_pm_configure()` +
+auditoria de locks; log de transição de estado (fecha a anomalia #4);
+`wake_on_touch` gateando o ISR (#1); validar wake do BOOT no standby (#3).
+Aceite: logs + ΔmA do Estágio 0 repetido.
+
+**Estágio 2 — painel** (se a medição apontar painel/DSI como dominante no
+standby): sleep do ST7701S ou tear-down LDO ch3 + DSI, wake c/ re-init
+(0,3–0,5 s aceitáveis).
+
+**Estágio 3 — M-power (light sleep)** SOMENTE se 1+2 não atingirem a meta:
+rework de re-init coordenado hosted+SDMMC+USB no wake, ou tear-down
+completo do hosted antes do sleep.
+
+**Estágio 4 — hibernate v2 (a "refatoração"):** base = M4.13b (flag NVS +
+session.txt); acrescentar desligamento da vizinhança antes do deep sleep
+(C6, GT911, painel); UX documentada: USB → RESET restaura; bateria →
+IP5306 corta, BF2/USB religam e restauram; opcional mod BF2→LP GPIO p/
+wake por botão sem power-cycle. Critério: boot pós-hibernate restaura
+tela+nota nos dois cenários de alimentação.
+
+## 5. Decisões em aberto (com você)
+
+1. Medir primeiro (Estágio 0) com amperímetro, ou Estágio 1 direto e
+   medir depois?
+2. Corte do IP5306 em standby otimizado na bateria: aceitar como
+   "power-off" ou manter margem acima do limiar?
+3. Mod BF2→LP GPIO: entra em alguma rodada de hardware sua?
+4. M4.13b: flashear o patch agora (valida hibernate no binário atual) ou
+   esperar o Estágio 4 junto?
+
+## Fontes
+
+[1] IDF Sleep Modes (ESP32-P4): wake só em GPIOs do VDD_LP; isolamento de
+GPIOs no sleep — https://docs.espressif.com/projects/esp-idf/en/stable/esp32p4/api-reference/system/sleep_modes.html
+[2] ESP-IDF issue #18443 (P4 deep sleep não reduz consumo): C6 off via
+GPIO54 + `gpio_force_hold_all`; vizinhos (ETH PHY) dominavam; "dev board
+not designed with deep sleep in mind" — https://github.com/espressif/esp-idf/issues/18443
+[3] Datasheet ESP32-P4 (Elecrow mirror): 55 GPIOs, 16 LP — https://www.elecrow.com/download/product/DHE04310D/esp32-p4_datasheet_en.pdf
+[4] POWER.md/HARDWARE.md internos: LDO ch3/ch4, kill-switch, IP5306/BF2.
+[5] Datasheet GT911 (FORTEC): sleep por comando I2C, INT baixo antes — https://www.fortec-integrated.de/fileadmin/pdf/produkte/Touchcontroller/DDGroup/GT911_Datasheet.pdf
+[6] GT911 Programming Guide (Orient Display): `0x05` em `0x8040` — https://www.orientdisplay.com/pdf/GT911.pdf
+[7] Correntes GT911: 3,5 mA ativo, <50 µA sleep, <10 µA hibernation — https://focuslcds.com/application-notes/programming-a-capacitive-touch-panel-utilizing-the-gt911-touch-controller/
+[8] Goodix forum: wake-on-touch em sleep/doze — https://developers.goodix.com/en/bbs/detail/ddf4973acf244c89a5f2f80505c49767
+[9] M5Stack community: IP5306 corta VOUT <45 mA após ~32 s — https://community.m5stack.com/topic/62/ip5306-automatic-standby
+[10] lewisxhe/esp32-camera-series#26: IP5306 desliga em deep sleep (~5 mA) — https://github.com/lewisxhe/esp32-camera-series/issues/26
+[11] Arduino forum: IP5306 I2C e auto-shutdown configurável (~30 s) — https://forum.arduino.cc/t/using-esp32-with-ip5306-i2c-power-management-and-voltage-protection/1435971
+[12] esp-hosted-mcu exemplo host_network_split__power_save (lifecycle do
+host power save) — https://github.com/espressif/esp-hosted-mcu/blob/main/examples/host_network_split__power_save/README_light_sleep.md

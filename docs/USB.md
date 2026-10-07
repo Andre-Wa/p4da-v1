@@ -78,3 +78,19 @@ nunca pela task de UI.
 | 4 | Digitar após o wake | teclas chegam ao editor |
 | 5 | Segurar uma tecla | 1 dekeypress (sem flood), exceto repeat do próprio firmware do teclado |
 | 6 | Boot com teclado já plugado | continua funcionando (regressão) |
+
+## M5a — áudio USB: arquitetura (da revisão pré-M5, 2026-10-05)
+
+- **P4 tem DOIS controladores USB 2.0 OTG (HS + FS), cada um host
+  independente, e a Host Library aceita múltiplos class drivers
+  simultâneos** (clientes separados, 1 task por driver) [6]. Consequência:
+  teclado HID e DAC/caixa UAC podem coexistir SEM troca de papel — via
+  hub externo (`CONFIG_USB_HOST_HUBS_SUPPORTED`) no conector OTG, ou um
+  device composto. Plano M5a: (1) `usb_host_uac` como 2º client ao lado
+  do HID; (2) hub support ligado; (3) seletor de saída (UAC vs futuro
+  ES8311) em Config; (4) fallback sem hub: 1 device por vez com hot-swap
+  já tratado pelo HID.
+- Regra de task da Host Library: clients = tasks; nosso `spawn_thread`
+  já casa com isso.
+- Alto-falante/bateria JST chegados: caminho ES8311/NS4150 volta ao plano
+  (beep de UI primeiro), UAC vira alternativa, não única saída.

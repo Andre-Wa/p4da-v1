@@ -210,7 +210,7 @@ de validação). Patch delta sobre v4.13+M4.13b:
       com `s_paused` loga `desconectado em standby — reconexão pausada
       (M4.14)` e não retenta; relógio via `esp_sntp_stop()`/
       `sntp_restart()`. A associação VIVA é mantida de propósito
-      (modem-sleep do C6 = próximo estágio, `docs/POWER_REWORK.md`).
+      (modem-sleep do C6 = próximo estágio, `docs/POWER.md` § estágios).
       Wake: `Wi-Fi retomado do standby` (+ `— reconectando` se caído) e
       `NTP retomado`.
 - [x] **#3 BOOT como wake**: ISR de GPIO35 já existia; conferido que nada
@@ -233,7 +233,7 @@ de validação). Patch delta sobre v4.13+M4.13b:
       consultam mais `esp_sntp_enabled()` (assíncrono, race); (c) BOOT não
       acorda do HIBERNATE por design (deep sleep sem wake source; GPIO35 é
       HP, wake de deep sleep só LP 0–15) — fica p/ o Estágio 4 do
-      POWER_REWORK (mod BF2→LP ou aceitar RESET/BF2 como power-on).
+      POWER.md § estágios (mod BF2→LP ou aceitar RESET/BF2 como power-on).
 - [x] **M4.14.3 (2ª rodada da validação)**: toque fantasma em elemento
       interativo durante STANDBY com chave OFF — o toque chegava ao Slint
       (a integração slint-esp polla o driver sozinha), o callback do
@@ -266,7 +266,7 @@ de validação). Patch delta sobre v4.13+M4.13b:
       inclui o reteste do hibernate M4.13b (presente neste binário).
 
 ## M4.15 — Estágio 1b: vizinhança dorme junto (FEITO; ✅ VALIDADO EM HARDWARE 2026-10-05 — C6-off fica p/ hibernate v2)
-Consome parte do Estágio 1b de `docs/POWER_REWORK.md` com evidência na mão
+Consome parte do Estágio 1b de `docs/POWER.md` (§ estágios) com evidência na mão
 (issue esp-idf#18443; correntes do datasheet GT911). DFS/`esp_pm_configure`
 e teardown do painel seguem ADIADOS até o Estágio 0 (medição com
 amperímetro): sem número, não se otimiza.
@@ -657,7 +657,7 @@ Wishlist prioridade 4 (2026-09-30), escopo adaptado ao painel/fontes mono.
       recolor imediato, persistência no reboot e animação do OSK.
 
 ### M5.0b — Quick wins da revisão pré-M5 (FEITO; aguardando hardware)
-Itens A1–A5 de `docs/REVIEW_PRE_M5.md`:
+Itens A1–A5 da revisão pré-M5 (fundida em USB.md §M5a, ARCHITECTURE.md §princípios e ROADMAP M5.0b):
 
 - [x] **A1 backoff Wi-Fi não-bloqueante**: retry sai do event handler
       (que bloqueava o event loop 2 s por retry) p/ task `wifi_rcn` com
@@ -825,7 +825,7 @@ marcava rede BOA por AUTH_FAIL espúrio — log de 2026-10-05/06):
 
 ## M-power (rework do light sleep) — ABERTO
 - Pesquisa completa + plano em estágios (0 medir → 1 software M4.14 →
-  2 painel → 3 light sleep → 4 hibernate v2) em `docs/POWER_REWORK.md`
+  2 painel → 3 light sleep → 4 hibernate v2) em `docs/POWER.md` § estágios
   (2026-10-04). Decisões em aberto listadas lá (§5).
 - O caminho `power.light_sleep` está atrás do kill-switch
   `power_mgmt_light_sleep_active()` (sempre false): no wake, o remount do

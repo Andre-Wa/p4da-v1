@@ -292,3 +292,17 @@ Alvos de toque: todos os controles do painel têm ≥48 px de altura
   da query) — não depende mais de fontes instaladas no host. O truque de
   renomear DejaVu p/ "Arial" em `~/.local/share/fonts` era só p/ hosts sem
   família default alguma.
+
+## M5.0 Expressive — acento dinâmico, formas, movimento (2026-10-05)
+
+- **Cor dinâmica**: `Theme.accent` (string) dirige 7 cores de marca por
+  ternárias em `theme.slint`; C++ seta `AppWindow.cfg-accent`
+  (propagação `init`/`changed`). Limitação Slint 1.12: globals NÃO são
+  expostas ao C++ — nunca tente `ui->global<Theme>()`.
+- **Formas**: shapes 6/12/18/24/40 px (botões pill, diálogos redondos).
+- **Movimento**: OSK do editor sempre montado com `animate height`
+  (170 ms ease-out, reveal clipado); quick-panel mantém drag-following.
+  Tipografia expressiva DEFERIDA (glifos por tamanho custam flash;
+  escala offline via `tools/scale_type.py`).
+- **Prompt (M4.16.2)**: botões OK/Cancelar em geometria ABSOLUTA no
+  diálogo — ver gotcha de layout em `docs/DEPENDENCIAS.md`.
