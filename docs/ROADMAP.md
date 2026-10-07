@@ -635,7 +635,15 @@ toda a interface".
       Voltar); tile do launcher habilitado; AppState::Music; sessão
       "music"; evidência `render_music.png`.
 - [x] Sobre = "M5a.1"; slint limpo, hosttest T1–T8, md_test 24/24.
-- **Aceite HW**: DAC/fone USB-C (sem hub): `speaker UAC encontrado` +
+- [x] **M5a.1.1**: `CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE`
+      256→1024 (QCY H3s composite morria em CHECK_SHORT_CONFIG_DESC);
+      warning deprecated do slint-esp aceito e documentado
+      (DEPENDENCIAS.md).
+- [x] **M5a.1.2**: QCY H3S = UAC2 → fora do alcance do driver
+      (UAC1-only, `uac_host.c:1527`); aceite de áudio fica condicionado a
+      device UAC1 ou ao caminho ES8311; HID do H3S (media keys) virou
+      candidato M5a.2.
+- **Aceite HW**: DAC/fone USB-C **UAC1** (sem hub): `speaker UAC encontrado` +
       `UAC device: "…"` no log; tocar/parar/trocar faixa com som real;
       unplugar tocando → "sem dispositivo" sem crash; replugar → toca;
       WAV 24 bits → estado de erro; standby durante música → áudio

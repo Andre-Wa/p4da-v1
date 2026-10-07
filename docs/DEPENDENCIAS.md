@@ -23,6 +23,9 @@ API dentro da mesma major** permitida pelos ranges `^`. Por isso o
 | `espressif/lua` | `^5.5.0` | **5.5.0** | >= 5.0 | ⚠️ compila (API 5.5: `lua_newstate` c/ seed, `LUA_RELEASE`), **mas a VM é 32-bit e o define é PRIVATE** — `main` precisa de `LUA_32BITS=1` (risco #6; causa raiz do INT_MAX, `docs/HARDWARE.md` achado #9) |
 
 ## Riscos residuais (monitorar, não bloqueantes)
+- `usb_host_uac` 1.5.0 é **UAC 1.0 only** (`uac_host.c:1527`): fones/DACs
+  UAC2 (ex.: QCY H3S) enumeram mas nunca viram speaker. Sem fix upstream
+  à vista; M5a testa com UAC1 ou ES8311 local.
 
 1. **ABI do prebuilt do Slint no link.** O `.a` pré-compilado vem do Slint,
    não do seu toolchain. Se houver `undefined reference` ou símbolo duplicado
@@ -139,3 +142,8 @@ docs/UI.md §Fontes e docs/FONTES.md.
 5. **`if` em layout + irmãos posteriores**: mesmo family do item 4 —
    o campo do prompt virou Rectangle incondicional (altura 0/visible)
    p/ eliminar a variável.
+
+## Warnings aceitos (componentes gerenciados, não-nossos)
+- `slint-esp.cpp:195`: `esp_lcd_touch_get_coordinates` deprecated
+  (some até o Slint subir do pin 1.12.1 — a troca p/ `esp_lcd_touch_get_data`
+  é do upstream do componente slint__slint, não nossa).

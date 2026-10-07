@@ -27,8 +27,12 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_API_ENCODING_UTF_8=y
 
-# --- USB-OTG (host p/ teclado) ---
-CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=256
+# --- USB-OTG (host p/ teclado + áudio) ---
+# M5a.1 (2026-10-07): 256 era o teto da era só-teclado; o QCY H3s (composite
+# BT+UAC) tem config descriptor MAIOR que 256 B e a enumeração morria em
+# CHECK_SHORT_CONFIG_DESC. 1024 cobre devices de áudio compostos;
+# custo = 1 KB de buffer de control transfer.
+CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1024
 CONFIG_USB_OTG_SUPPORTED=y
 
 # --- LCD ---

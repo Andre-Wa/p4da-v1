@@ -116,3 +116,30 @@ nunca pela task de UI.
 - Round 2 (M5a.2): hub p/ teclado+DAC juntos
   (`CONFIG_USB_HOST_HUBS_SUPPORTED`), pause (suspend/resume), teclas de
   mídia, volume por device; M5b: decoder MP3 e playlists.
+
+### M5a.1.1 — enumeração de devices compostos (QCY H3s, 2026-10-07)
+`CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` 256→1024: o config
+descriptor do H3s (composite BT+UAC) excedia 256 B e a enumeração
+morria em `CHECK_SHORT_CONFIG_DESC` antes de qualquer class driver
+ver o device (por isso "não aparece erro" no UAC). ATENÇÃO: mudar o
+default exige regenerar o `sdkconfig` (backup + rm + build), senão o
+valor velho persiste.
+
+### M5a.1.2 — QCY H3S é UAC 2.0: fora do alcance do driver (2026-10-07)
+Evidência: `lsusb -d 3654:4a55 -v` = 1× Audio Control + 4× Audio
+Streaming + 1× HID (subclass 0/proto 0 = consumer control, NÃO teclado
+boot). O `espressif/usb_host_uac` (até 1.5.0) rejeita tudo que não for
+bcdADC 0x0100: `uac_host.c:1527 "UAC version 0x%04X not supported"` —
+no log do plug do H3S aparece `UAC version 0x200 not supported` e NENHUM
+`speaker UAC encontrado`. Consequências:
+- M5a.1 só toca em devices **UAC 1.0** (dongles DAC clássicos — chip
+  CM108/CM109 e "USB sound cards" verdes típicas são UAC1; verifique com
+  lsusb antes de comprar) ou no caminho local ES8311/I2S quando o
+  alto-falante JST chegar.
+- UAC2 host não existe no ecossistema Espressif hoje (só device-side);
+  implementar parser UAC2 próprio = projeto à parte, não está no roadmap.
+- O HID do H3S anexa como "teclado" subclass 0/proto 0 (nosso driver HID
+  aceita qualquer HID hoje): inofensivo, sem teclas; mapear os media
+  keys dele via report descriptor = candidato M5a.2.
+- O teto de control transfer 1024 (M5a.1.1) segue necessário e correto:
+  sem ele a enumeração do H3S nem completava.
