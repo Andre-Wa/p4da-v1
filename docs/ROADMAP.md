@@ -639,10 +639,10 @@ toda a interface".
       256→1024 (QCY H3s composite morria em CHECK_SHORT_CONFIG_DESC);
       warning deprecated do slint-esp aceito e documentado
       (DEPENDENCIAS.md).
-- [x] **M5a.1.2**: QCY H3S = UAC2 → fora do alcance do driver
-      (UAC1-only, `uac_host.c:1527`); aceite de áudio fica condicionado a
-      device UAC1 ou ao caminho ES8311; HID do H3S (media keys) virou
-      candidato M5a.2.
+- [x] **M5a.1.2**: H3S é UAC1 (hipótese UAC2 inicial corrigida);
+      crash no plug era reentrância nossa (open/close no callback do
+      driver) → v5.4.4 difere p/ task `au_evt`; volume-query timeout do
+      H3S aceito como não-fatal; tons de teste 44k1 E 48k no template.
 - **Aceite HW**: DAC/fone USB-C **UAC1** (sem hub): `speaker UAC encontrado` +
       `UAC device: "…"` no log; tocar/parar/trocar faixa com som real;
       unplugar tocando → "sem dispositivo" sem crash; replugar → toca;
@@ -746,6 +746,9 @@ marcava rede BOA por AUTH_FAIL espúrio — log de 2026-10-05/06):
       sincroniza o switch (`set_cfg_wifi_on(true)`); pilha da `wifi_rcn`
       4096→6144 (HWM de 1960 B livres durante scan).
 - [x] Sobre = "M5.3.2".
+- [x] **M5a.1.3**: pilha do `au_play` 6144 int → 10240 PSRAM (stack
+      protection fault no 1º play, log 2026-10-07); `au_evt` 6144 PSRAM;
+      ambas no HWM.
 - **Aceite HW**: AP atual desligado → 3 tentativas? NÃO: NO_AP_FOUND roda
       direto p/ scan e troca (log `escolhida por scan`); senha errada
       proposital → `tentativa 1/3…2/3…3/3` e só então marca/rota; AUTH_FAIL

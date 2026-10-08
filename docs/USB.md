@@ -125,21 +125,30 @@ ver o device (por isso "não aparece erro" no UAC). ATENÇÃO: mudar o
 default exige regenerar o `sdkconfig` (backup + rm + build), senão o
 valor velho persiste.
 
-### M5a.1.2 — QCY H3S é UAC 2.0: fora do alcance do driver (2026-10-07)
-Evidência: `lsusb -d 3654:4a55 -v` = 1× Audio Control + 4× Audio
-Streaming + 1× HID (subclass 0/proto 0 = consumer control, NÃO teclado
-boot). O `espressif/usb_host_uac` (até 1.5.0) rejeita tudo que não for
-bcdADC 0x0100: `uac_host.c:1527 "UAC version 0x%04X not supported"` —
-no log do plug do H3S aparece `UAC version 0x200 not supported` e NENHUM
-`speaker UAC encontrado`. Consequências:
-- M5a.1 só toca em devices **UAC 1.0** (dongles DAC clássicos — chip
-  CM108/CM109 e "USB sound cards" verdes típicas são UAC1; verifique com
-  lsusb antes de comprar) ou no caminho local ES8311/I2S quando o
-  alto-falante JST chegar.
-- UAC2 host não existe no ecossistema Espressif hoje (só device-side);
-  implementar parser UAC2 próprio = projeto à parte, não está no roadmap.
-- O HID do H3S anexa como "teclado" subclass 0/proto 0 (nosso driver HID
-  aceita qualquer HID hoje): inofensivo, sem teclas; mapear os media
-  keys dele via report descriptor = candidato M5a.2.
-- O teto de control transfer 1024 (M5a.1.1) segue necessário e correto:
-  sem ele a enumeração do H3S nem completava.
+### M5a.1.2 — QCY H3S: UAC1 aceito, crash por callback-context nosso (2026-10-07)
+CORREÇÃO da hipótese inicial (que dizia UAC2): o H3S (3654:4a55) é
+**UAC 1.0** — o driver emite `speaker UAC encontrado` e lê o nome
+(`UAC device: "QCY H3S"`). As 4 interfaces Streaming são alts de
+playback/capture UAC1, não evidência de UAC2.
+O crash dos logs de 2026-10-07 (asserts `spinlock_acquire` e
+`xQueueGenericSend` dentro de `usb_host_client_handle_events`, via
+`uac_host_handle_events`) era **reentrância nossa**: o open/get_info/
+close para ler o nome rodava DENTRO do callback do driver (contexto da
+task de eventos do UAC). Cura v5.4.4: callback só enfileira evento;
+task `au_evt` faz o open/getName/close.
+Não-fatais aceitos: `Control Transfer Timeout` + `Failed to get volume
+min/range` (query de volume que o H3S não responde a tempo).
+Consequências práticas:
+- M5a.1 testável COM o H3S (UAC1) — som real possível; alt setting
+  precisa casar com o WAV (daí os dois tons de teste, 44k1 e 48k).
+- HID do H3S (subclass 0/proto 0 = consumer control) segue anexando
+  como "teclado" inofensivo; media keys via report descriptor = M5a.2.
+- O teto de control transfer 1024 (M5a.1.1) segue necessário.
+
+### M5a.1.3 — pilhas do player (2026-10-07)
+`au_play` estourou 6144 B internos no primeiro play (Stack protection
+fault em `_svfprintf_r`: FATFS + UAC + vprintf não cabem). Agora 10240 B
+em PSRAM (`xTaskCreateWithCaps`), `au_evt` 6144 PSRAM; ambas no HWM do
+power_mgmt. Ruído aceito: `uac stream interface not found` (E) ao
+plugar device SEM classe de áudio (ex.: teclado) — é o driver dizendo
+"não é comigo".

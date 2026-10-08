@@ -1851,6 +1851,14 @@ extern "C" void app_main(void)
             if (g_ui->get_active_app() == AppState::Editor) ed_push_ui(false);
         });
     });
+    /* M5a.1 (v5.4.3): o boot-wire do UAC tinha sido perdido por um
+     * replace sem assert numa rodada anterior (âncora errada: a chamada
+     * do HID leva lambdas). Sem isto o driver NUNCA instalava — log da
+     * 13ª rodada não tinha uma linha de audio_uac. */
+    audio_uac_set_event_cb([](void *) {
+        slint::invoke_from_event_loop([] { push_mus_ui(); });
+    }, NULL);
+    audio_uac_init();
     ui->on_cfg_set_accent([ui](slint::SharedString a) {
         activity();
         pda_settings_set("ui.accent", 0, false, false, std::string(a.data()).c_str());

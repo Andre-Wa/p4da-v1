@@ -82,7 +82,8 @@ static void log_hwm(const char *when)
 {
     static const char *names[] = { "main", "ui_loop", "pda_power", "wifi_net",
                                    "wifi_rcn", "io_edit", "io_list",
-                                   "io_notes", "io_scripts", "lua_script" };
+                                   "io_notes", "io_scripts", "lua_script",
+                                   "au_play", "au_evt" };
     for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
         TaskHandle_t h = xTaskGetHandle(names[i]);
         if (h) {

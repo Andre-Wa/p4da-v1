@@ -17,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "esp_heap_caps.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -82,6 +83,42 @@ static void utf8_from_wchar(char *dst, size_t sz, const wchar_t *src)
     dst[o] = 0;
 }
 
+/* M5.4.4: o callback do driver roda NA task de eventos do UAC — chamar
+ * APIs bloqueantes do driver ali (open/close p/ ler o nome) corrompia a
+ * fila de client events (asserts em usb_host_client_handle_events nos
+ * logs de 2026-10-07 com o QCY H3S). Callback só enfileira; quem abre
+ * é a task au_evt. */
+typedef struct { uint8_t op; uint8_t addr; uint8_t iface; } evt_t;
+static QueueHandle_t s_evtq = NULL;
+
+static void fetch_name_taskish(uint8_t addr, uint8_t iface)
+{
+    uac_host_device_config_t dcfg = {
+        .addr = addr, .iface_num = iface,
+        .buffer_size = 4096, .buffer_threshold = 2048,
+        .callback = dev_event_cb, .callback_arg = NULL,
+    };
+    uac_host_device_handle_t dev = NULL;
+    if (uac_host_device_open(&dcfg, &dev) != ESP_OK) return;
+    uac_host_dev_info_t info;
+    if (uac_host_get_device_info(dev, &info) == ESP_OK) {
+        utf8_from_wchar(s_devname, sizeof(s_devname), info.iProduct);
+        ESP_LOGI(TAG, "UAC device: \"%s\"", s_devname);
+    }
+    uac_host_device_close(dev);
+}
+
+static void evt_task(void *arg)
+{
+    (void)arg;
+    evt_t e;
+    for (;;) {
+        if (xQueueReceive(s_evtq, &e, portMAX_DELAY) != pdTRUE) continue;
+        if (e.op == 1) fetch_name_taskish(e.addr, e.iface);
+        set_state(s_present ? "pronto" : "sem dispositivo");
+    }
+}
+
 static void drv_event_cb(uint8_t addr, uint8_t iface_num,
                          uac_host_driver_event_t ev, void *arg)
 {
@@ -91,22 +128,8 @@ static void drv_event_cb(uint8_t addr, uint8_t iface_num,
     s_iface = iface_num;
     s_present = true;
     ESP_LOGI(TAG, "speaker UAC encontrado (addr %u iface %u)", addr, iface_num);
-    /* nome do produto p/ UI: abre, lê info, fecha */
-    uac_host_device_config_t dcfg = {
-        .addr = addr, .iface_num = iface_num,
-        .buffer_size = 4096, .buffer_threshold = 2048,
-        .callback = dev_event_cb, .callback_arg = NULL,
-    };
-    uac_host_device_handle_t dev = NULL;
-    if (uac_host_device_open(&dcfg, &dev) == ESP_OK) {
-        uac_host_dev_info_t info;
-        if (uac_host_get_device_info(dev, &info) == ESP_OK) {
-            utf8_from_wchar(s_devname, sizeof(s_devname), info.iProduct);
-            ESP_LOGI(TAG, "UAC device: \"%s\"", s_devname);
-        }
-        uac_host_device_close(dev);
-    }
-    set_state("pronto");
+    evt_t e = { .op = 1, .addr = addr, .iface = iface_num };
+    xQueueSend(s_evtq, &e, 0);   /* NÃO abrir nada neste contexto */
 }
 
 /* ---------------- WAV PCM16 ---------------- */
@@ -270,7 +293,17 @@ esp_err_t audio_uac_init(void)
     if (s_q) return ESP_OK;
     s_q = xQueueCreate(2, sizeof(cmd_t));
     if (!s_q) return ESP_ERR_NO_MEM;
-    if (xTaskCreate(player_task, "au_play", 6144, NULL, 4, NULL) != pdPASS)
+    s_evtq = xQueueCreate(4, sizeof(evt_t));
+    if (!s_evtq) return ESP_ERR_NO_MEM;
+    /* M5.4.5: 6148→10240 em PSRAM: a cadeia fopen/fread FATFS +
+     * uac open/start + ESP_LOGI(vprintf) estourou 6144 internos no
+     * primeiro play (Stack protection fault em _svfprintf_r, log de
+     * 2026-10-07). Mesma política das threads de I/O do main.cpp. */
+    if (xTaskCreateWithCaps(player_task, "au_play", 10240, NULL, 4, NULL,
+                            MALLOC_CAP_SPIRAM) != pdPASS)
+        return ESP_FAIL;
+    if (xTaskCreateWithCaps(evt_task, "au_evt", 6144, NULL, 4, NULL,
+                            MALLOC_CAP_SPIRAM) != pdPASS)
         return ESP_FAIL;
     if (xTaskCreate(init_task, "au_init", 3072, NULL, 3, NULL) != pdPASS)
         return ESP_FAIL;
