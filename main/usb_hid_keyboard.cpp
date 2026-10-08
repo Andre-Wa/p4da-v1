@@ -21,6 +21,7 @@
 #include "esp_log.h"
 #include "usb/usb_host.h"
 #include "usb/hid_host.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -139,7 +140,18 @@ static void hid_keyboard_report_callback(const uint8_t *const data, int length)
         if (act >= 0) { s_media_cb(act); return; }
     }
     if (report_len < 8) {
-        ESP_LOGD(TAG, "relatório descartado: tamanho %d", length);
+        /* M5a.2.1 (v5.7): diagnóstico p/ media keys do H3S — o formato
+         * real dos reports ainda é desconhecido; 1 linha/s com len+bytes
+         * dos reports que não são teclado nem consumer conhecido. */
+        static int64_t s_last_dbg = 0;
+        const int64_t now = esp_timer_get_time();
+        if (now - s_last_dbg > 1000000) {
+            s_last_dbg = now;
+            ESP_LOGI(TAG, "report descartado: len=%d bytes=%02x %02x %02x %02x",
+                     length,
+                     length > 0 ? data[0] : 0, length > 1 ? data[1] : 0,
+                     length > 2 ? data[2] : 0, length > 3 ? data[3] : 0);
+        }
         return;
     }
 

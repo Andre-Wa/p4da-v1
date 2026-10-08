@@ -162,3 +162,15 @@ plugar device SEM classe de áudio (ex.: teclado) — é o driver dizendo
   "sem suporte" até o feature-detect de volume (v5.7). Teclados boot
   (8/9 B) intocados; a interface media de teclados completos (subclass 0)
   ganha função de graça.
+
+### M5a.2.1 (v5.7) — robustez de stream + diagnóstico de media keys
+- Write com retry (5×100 ms): erro único em transição (settle pós-plug,
+  suspend/resume) não mata mais a faixa; aborta só em persistente/
+  unplug/stop.
+- Cleanup do do_play: `stop` somente com device presente; `close`
+  best-effort — unplug durante pause não trava mais a `au_play`
+  (a fila de plays sobrevive).
+- Media keys do H3S ainda mudas: formato real dos reports desconhecido;
+  log `usb_hid_kbd: report descartado: len=N bytes=..` (1/s) coleta o
+  pattern com uma pressionada por tecla p/ o parse certo sair com
+  evidência na próxima rodada.

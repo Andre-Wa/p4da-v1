@@ -245,18 +245,35 @@ static void do_play(const char *path)
         if (s_stop_req || !s_present) break;
         uint32_t n = left < sizeof(buf) ? left : (uint32_t)sizeof(buf);
         if (fread(buf, 1, n, f) != n) break;
-        esp_err_t e = uac_host_device_write(dev, buf, n, pdMS_TO_TICKS(2000));
-        if (e != ESP_OK) {
-            ESP_LOGW(TAG, "write: %s", esp_err_to_name(e));
-            break;
+        /* M5a.2.1 (v5.7): write pode falhar UMA vez em transição
+         * (device recém-conectado assentando, suspend/resume de pause,
+         * settle do H3S) — antes qualquer erro matava a faixa (logs de
+         * 2026-10-08: write INVALID_STATE ~1 s após o start). Retry 5×
+         * com 100 ms; aborta só em erro persistente/unplug/stop. */
+        int wfail = 0;
+        for (;;) {
+            esp_err_t e = uac_host_device_write(dev, buf, n,
+                                                pdMS_TO_TICKS(2000));
+            if (e == ESP_OK) break;
+            if (!s_present || s_stop_req || ++wfail >= 5) {
+                ESP_LOGW(TAG, "write: %s (%d retries) — fim da faixa",
+                         esp_err_to_name(e), wfail);
+                goto play_end;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
         left -= n;
     }
+play_end:
     vTaskDelay(pdMS_TO_TICKS(120));   /* drain do ring do driver */
-    if (s_paused) uac_host_device_resume(dev);
+    if (s_paused && s_present) uac_host_device_resume(dev);
     s_paused = false;
     s_dev = NULL;
-    uac_host_device_stop(dev);
+    /* M5a.2.1: stop SÓ com device vivo (unplug durante pause/playback
+     * deixava o close/stop travando a task au_play — fila morria junto,
+     * teste 5 da 15ª rodada). close best-effort sempre, p/ liberar o
+     * driver. */
+    if (s_present) uac_host_device_stop(dev);
     uac_host_device_close(dev);
     s_playing = false;
     fclose(f);
@@ -333,7 +350,7 @@ bool audio_uac_paused(void) { return s_paused; }
 
 void audio_uac_pause(void)
 {
-    if (!s_playing || s_paused) return;
+    if (!s_playing || s_paused || !s_present) return;
     s_paused = true;
     if (s_dev) uac_host_device_suspend((uac_host_device_handle_t)s_dev);
     set_state("pausado");
@@ -343,8 +360,10 @@ void audio_uac_resume(void)
 {
     if (!s_playing || !s_paused) return;
     s_paused = false;
-    if (s_dev) uac_host_device_resume((uac_host_device_handle_t)s_dev);
-    set_state("tocando");
+    /* sem device (unplug pausado): estado limpa, driver não é tocado */
+    if (s_dev && s_present)
+        uac_host_device_resume((uac_host_device_handle_t)s_dev);
+    set_state(s_present ? "tocando" : "sem dispositivo");
 }
 const char *audio_uac_track(void) { return s_track; }
 const char *audio_uac_state(void) { return s_state; }

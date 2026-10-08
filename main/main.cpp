@@ -1634,7 +1634,9 @@ extern "C" void app_main(void)
     ui->on_mus_refresh([]() { activity(); refresh_music_list(); });
     ui->on_mus_pause([]() {
         activity();
-        if (audio_uac_paused()) audio_uac_resume(); else audio_uac_pause();
+        if (audio_uac_present()) {
+            if (audio_uac_paused()) audio_uac_resume(); else audio_uac_pause();
+        }
         push_mus_ui();
     });
     /* M5a.2: media keys do consumer control (H3S/teclados c/ mídia). */
