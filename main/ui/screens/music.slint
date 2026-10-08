@@ -11,6 +11,7 @@ export component MusicScreen inherits Rectangle {
     in property <string> track;
     callback play(int);
     callback stop();
+    callback pause();
     callback next();
     callback refresh();
     callback go-back();
@@ -86,6 +87,10 @@ export component MusicScreen inherits Rectangle {
                 spacing: Theme.sp-sm;
                 FilledButton { horizontal-stretch: 1; text: "Parar"; clicked => { root.stop(); } }
                 GhostButton { horizontal-stretch: 1; text: "Próxima"; clicked => { root.next(); } }
+            }
+            HorizontalLayout {
+                spacing: Theme.sp-sm;
+                TonalButton { horizontal-stretch: 1; text: "Pausar/Seguir"; clicked => { root.pause(); } }
             }
             HorizontalLayout {
                 spacing: Theme.sp-sm;

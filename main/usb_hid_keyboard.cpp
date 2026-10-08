@@ -101,6 +101,10 @@ static void track_remove(hid_host_device_handle_t h)
 bool usb_hid_keyboard_connected(void) { return s_conn_count.load() > 0; }
 
 /* ------------------------------------------------------------------ */
+static MediaKeyCallback s_media_cb;
+
+void usb_hid_keyboard_set_media_cb(MediaKeyCallback cb) { s_media_cb = cb; }
+
 static void hid_keyboard_report_callback(const uint8_t *const data, int length)
 {
     const uint8_t *report = data;
@@ -111,6 +115,28 @@ static void hid_keyboard_report_callback(const uint8_t *const data, int length)
     if (length == 9) {
         report = data + 1;
         report_len = 8;
+    }
+    /* M5a.2: consumer controls (media keys) chegam como reports curtos
+     * (2 bytes de usage HUT 0x0C, ou 3 com Report ID — mesmo padrão do
+     * prefixo de 1 byte que o boot protocol vê no caso de 9 bytes).
+     * Teclados boot seguem o caminho de 8 bytes abaixo, intocados. */
+    if (report_len >= 1 && report_len <= 3 && s_media_cb) {
+        uint16_t usage = (report_len == 3)
+            ? (uint16_t)(report[1] | (report[2] << 8))
+            : (uint16_t)(report[0] | (report_len == 2 ? (report[1] << 8) : 0));
+        int act = -1;
+        switch (usage) {
+        case 0x00B5: act = USB_MEDIA_NEXT; break;
+        case 0x00B6: act = USB_MEDIA_PREV; break;
+        case 0x00B7: act = USB_MEDIA_STOP; break;
+        case 0x00CD: act = USB_MEDIA_PLAYPAUSE; break;
+        case 0x00E9: act = USB_MEDIA_VOL_UP; break;
+        case 0x00EA: act = USB_MEDIA_VOL_DOWN; break;
+        case 0x00E2: act = USB_MEDIA_MUTE; break;
+        default: break;
+        }
+        if (usage == 0) return;          /* release: nada a fazer */
+        if (act >= 0) { s_media_cb(act); return; }
     }
     if (report_len < 8) {
         ESP_LOGD(TAG, "relatório descartado: tamanho %d", length);

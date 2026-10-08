@@ -30,6 +30,8 @@ typedef struct { int op; char path[144]; } cmd_t;   /* op 1=play 2=stop */
 static QueueHandle_t s_q = NULL;
 static volatile bool s_present = false;
 static volatile bool s_playing = false;
+static volatile bool s_paused = false;
+static volatile uac_host_device_handle_t s_dev = NULL;
 static volatile bool s_stop_req = false;
 static char s_devname[48] = "";
 static char s_track[64] = "";
@@ -60,6 +62,8 @@ static void dev_event_cb(uac_host_device_handle_t h,
     } else if (ev == UAC_HOST_DEVICE_EVENT_TRANSFER_ERROR) {
         ESP_LOGW(TAG, "transfer error UAC — parando faixa");
         s_stop_req = true;
+    } else if (ev == UAC_HOST_DEVICE_EVENT_TX_DONE && s_paused) {
+        /* ring esvaziou durante pause: nada a repor */
     }
 }
 
@@ -224,6 +228,8 @@ static void do_play(const char *path)
         uac_host_device_close(dev); fclose(f); set_state("erro: start stream"); return;
     }
     s_playing = true;
+    s_paused = false;
+    s_dev = dev;
     s_stop_req = false;
     set_state("tocando");
     ESP_LOGI(TAG, "tocando \"%s\" (%lu Hz, %u ch)", s_track,
@@ -232,6 +238,11 @@ static void do_play(const char *path)
     uint8_t buf[4096];
     uint32_t left = dlen;
     while (!s_stop_req && s_present && left > 0) {
+        /* pause: segura o fluxo sem fechar o device (posição = offset
+         * do arquivo, preservada); stop/unplug furam a espera. */
+        while (s_paused && !s_stop_req && s_present)
+            vTaskDelay(pdMS_TO_TICKS(50));
+        if (s_stop_req || !s_present) break;
         uint32_t n = left < sizeof(buf) ? left : (uint32_t)sizeof(buf);
         if (fread(buf, 1, n, f) != n) break;
         esp_err_t e = uac_host_device_write(dev, buf, n, pdMS_TO_TICKS(2000));
@@ -242,6 +253,9 @@ static void do_play(const char *path)
         left -= n;
     }
     vTaskDelay(pdMS_TO_TICKS(120));   /* drain do ring do driver */
+    if (s_paused) uac_host_device_resume(dev);
+    s_paused = false;
+    s_dev = NULL;
     uac_host_device_stop(dev);
     uac_host_device_close(dev);
     s_playing = false;
@@ -315,6 +329,23 @@ esp_err_t audio_uac_init(void)
 bool audio_uac_present(void) { return s_present; }
 const char *audio_uac_dev_name(void) { return s_devname; }
 bool audio_uac_playing(void) { return s_playing; }
+bool audio_uac_paused(void) { return s_paused; }
+
+void audio_uac_pause(void)
+{
+    if (!s_playing || s_paused) return;
+    s_paused = true;
+    if (s_dev) uac_host_device_suspend((uac_host_device_handle_t)s_dev);
+    set_state("pausado");
+}
+
+void audio_uac_resume(void)
+{
+    if (!s_playing || !s_paused) return;
+    s_paused = false;
+    if (s_dev) uac_host_device_resume((uac_host_device_handle_t)s_dev);
+    set_state("tocando");
+}
 const char *audio_uac_track(void) { return s_track; }
 const char *audio_uac_state(void) { return s_state; }
 void audio_uac_set_event_cb(audio_uac_event_cb cb, void *ctx)

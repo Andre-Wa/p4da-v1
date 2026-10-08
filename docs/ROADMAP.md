@@ -631,14 +631,18 @@ toda a interface".
       direta (fila só entre faixas); play com faixa tocando para a
       atual antes; scan de alt settings pula a alt 0 zero-bandwidth
       (mata os `Invalid alt setting` do driver).
-- [ ] Pause real: `uac_host_device_suspend/resume` (posição no WAV
-      preservada no player).
+- [x] Pause real: `uac_host_device_suspend/resume` (posição =
+      offset do arquivo; loop de write espera pausado) + botão
+      Pausar/Seguir na tela Música (v5.6).
 - [ ] Volume: `uac_host_*volume*` com feature-detect (H3S timeout no
       GET de volume → fallback mudo sem spam de log); slider na tela
-      Música persistido por device (VID:PID→volume em NVS).
-- [ ] Media keys do H3S/consumer controls HID (report descriptor:
-      play/pause/stop/next/vol) → comandos do player (seu HID subclass 0
-      proto 0 hoje é ignorado como teclado).
+      Música persistido por device (VID:PID→volume em NVS). ADIADO p/
+      v5.7: nenhum device de teste atual responde GET de volume.
+- [x] Media keys HID consumer control (v5.6): reports curtos
+      (2–3 B) com usages HUT 0x0C (B5/B6/B7/CD/E9/EA/E2) viram comandos
+      do player via `usb_hid_keyboard_set_media_cb`; boot keyboard (8 B)
+      intocado; vale p/ H3S E p/ teclados com interface de mídia.
+      Volume/mute: ação loga "sem suporte" até o feature-detect entrar.
 - [ ] Repetir/aleatório mínimo (off/todas/uma) na tela Música.
 - Aceite: Parar/Próxima/pause imediatos; tecla do fone controla o PDA;
   sem E-lines do driver no play.

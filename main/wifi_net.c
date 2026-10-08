@@ -210,6 +210,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
             /* M5.3: AUTH_FAIL espúrio acontece (rede boa!); só marca a
              * rede após TRY_BUDGET falhas de auth na mesma rede. */
             s_auth_hits[s_cur]++;
+            s_attempts++;          /* rótulo "tentativa n/3" coerente */
             if (s_auth_hits[s_cur] >= TRY_BUDGET) {
                 s_nets[s_cur].bad = 1;
                 ESP_LOGW(TAG, "AUTH_FAIL x%d em \"%s\": senha errada? "

@@ -37,6 +37,11 @@ void audio_uac_stop(void);
 
 bool audio_uac_playing(void);
 
+/** M5a.2: pause sem perder a posição (suspend/resume do stream). */
+bool audio_uac_paused(void);
+void audio_uac_pause(void);
+void audio_uac_resume(void);
+
 /** Basename da faixa atual ("" se nenhuma). */
 const char *audio_uac_track(void);
 

@@ -152,3 +152,13 @@ em PSRAM (`xTaskCreateWithCaps`), `au_evt` 6144 PSRAM; ambas no HWM do
 power_mgmt. Ruído aceito: `uac stream interface not found` (E) ao
 plugar device SEM classe de áudio (ex.: teclado) — é o driver dizendo
 "não é comigo".
+
+### M5a.2 (v5.6) — pause e media keys
+- Pause: `uac_host_device_suspend/resume`; posição = offset do arquivo
+  (loop de write espera em `s_paused`); stop/unplug furam a espera.
+- Media keys: reports HID curtos (2–3 B, HUT Consumer 0x0C) parseados em
+  `hid_keyboard_report_callback` ANTES do gate de 8 B do boot protocol;
+  play/pause, next, prev, stop viram comandos do player; vol/mute logam
+  "sem suporte" até o feature-detect de volume (v5.7). Teclados boot
+  (8/9 B) intocados; a interface media de teclados completos (subclass 0)
+  ganha função de graça.

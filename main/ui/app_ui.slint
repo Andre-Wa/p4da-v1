@@ -133,6 +133,7 @@ export component AppWindow inherits Window {
     in property <string> mus-track: "";
     callback mus-play(int);
     callback mus-stop();
+    callback mus-pause();
     callback mus-next();
     callback mus-refresh();
     callback net-rescan();
@@ -329,6 +330,7 @@ export component AppWindow inherits Window {
                 track: root.mus-track;
                 play(i) => { root.mus-play(i); }
                 stop => { root.mus-stop(); }
+                pause => { root.mus-pause(); }
                 next => { root.mus-next(); }
                 refresh => { root.mus-refresh(); }
                 go-back => { root.app-back(); }

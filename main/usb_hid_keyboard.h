@@ -22,6 +22,22 @@
  *  houver mapeamento simples (0 p/ setas/F-keys — use o keycode). */
 using KeyPressCallback = std::function<void(uint8_t ascii, uint8_t hid_keycode, uint8_t modifiers)>;
 
+/* Ações de media key (HUT Consumer 0x0C) p/ o callback abaixo. */
+enum {
+    USB_MEDIA_NEXT = 1,
+    USB_MEDIA_PREV,
+    USB_MEDIA_STOP,
+    USB_MEDIA_PLAYPAUSE,
+    USB_MEDIA_VOL_UP,
+    USB_MEDIA_VOL_DOWN,
+    USB_MEDIA_MUTE,
+};
+
+/** M5a.2: teclas de mídia de consumer controls (H3S, teclados completos
+ *  com interface media). Chamado de uma task do HID — faça hop p/ UI. */
+using MediaKeyCallback = std::function<void(int action)>;
+void usb_hid_keyboard_set_media_cb(MediaKeyCallback cb);
+
 /** connected=true: interface de teclado aberta; false: desconectou. */
 using UsbKbdEventCallback = std::function<void(bool connected)>;
 

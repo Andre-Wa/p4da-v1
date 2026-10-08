@@ -1632,6 +1632,42 @@ extern "C" void app_main(void)
         push_mus_ui();
     });
     ui->on_mus_refresh([]() { activity(); refresh_music_list(); });
+    ui->on_mus_pause([]() {
+        activity();
+        if (audio_uac_paused()) audio_uac_resume(); else audio_uac_pause();
+        push_mus_ui();
+    });
+    /* M5a.2: media keys do consumer control (H3S/teclados c/ mídia). */
+    usb_hid_keyboard_set_media_cb([](int act) {
+        slint::invoke_from_event_loop([act]() {
+            switch (act) {
+            case USB_MEDIA_PLAYPAUSE:
+                if (audio_uac_playing()) {
+                    if (audio_uac_paused()) audio_uac_resume(); else audio_uac_pause();
+                } else if (!g_mus_names.empty()) {
+                    music_play_idx(g_mus_cur >= 0 ? g_mus_cur : 0);
+                }
+                break;
+            case USB_MEDIA_NEXT:
+                if (!g_mus_names.empty())
+                    music_play_idx((g_mus_cur + 1) % (int)g_mus_names.size());
+                break;
+            case USB_MEDIA_PREV:
+                if (!g_mus_names.empty())
+                    music_play_idx((g_mus_cur - 1 + (int)g_mus_names.size()) %
+                                   (int)g_mus_names.size());
+                break;
+            case USB_MEDIA_STOP:
+                audio_uac_stop();
+                break;
+            default:
+                log_line("[audio] mídia: volume/mute ainda sem suporte "
+                         "(device ou rodada atual)", NULL);
+                break;
+            }
+            push_mus_ui();
+        });
+    });
     ui->on_app_back([]() {
         activity();
         /* saindo da tela Redes sem escolher: retoma reconexão da rede salva */
