@@ -199,7 +199,9 @@ static void do_play(const char *path)
         uac_host_device_close(dev); fclose(f); set_state("erro: info"); return;
     }
     bool found = false;
-    for (uint8_t a = 0; a < info.iface_alt_num && !found; a++) {
+    /* M5a.2: alt 0 do UAC1 é zero-bandwidth (sem endpoints) — o driver
+     * loga "Invalid alt setting" ao sondá-lo; começa no 1. */
+    for (uint8_t a = 1; a < info.iface_alt_num && !found; a++) {
         uac_host_dev_alt_param_t p;
         if (uac_host_get_device_alt_param(dev, a, &p) != ESP_OK) continue;
         if (p.format != 1 || p.channels != ch || p.bit_resolution != 16) continue;
@@ -256,7 +258,7 @@ static void player_task(void *arg)
     for (;;) {
         if (xQueueReceive(s_q, &c, portMAX_DELAY) != pdTRUE) continue;
         if (c.op == 1) do_play(c.path);
-        else if (s_playing) { s_stop_req = true; }
+        /* op 2 (stop) aposentado na M5a.2: stop é flag direta. */
     }
 }
 
@@ -323,6 +325,9 @@ void audio_uac_set_event_cb(audio_uac_event_cb cb, void *ctx)
 esp_err_t audio_uac_play(const char *path)
 {
     if (!s_q) return ESP_ERR_INVALID_STATE;
+    /* M5a.2: trocar de faixa com algo tocando = para a atual AGORA
+     * (a flag alcança o loop de write; a fila só é lida entre faixas). */
+    if (s_playing) s_stop_req = true;
     const char *base = strrchr(path, '/');
     snprintf(s_track, sizeof(s_track), "%s", base ? base + 1 : path);
     notify();
@@ -334,7 +339,16 @@ esp_err_t audio_uac_play(const char *path)
 
 void audio_uac_stop(void)
 {
+    /* M5a.2 (bug da 14ª rodada): stop pela FILA nunca chegava a tempo —
+     * o player só lê a fila ENTRE faixas, então o Parar da UI esperava o
+     * WAV acabar. Stop é flag direta (o loop de write a vê no próximo
+     * chunk, ~23 ms); a fila fica só p/ play. Sem faixa tocando, descarta
+     * plays pendentes (tap Parar logo após tocar uma faixa). */
     if (!s_q) return;
-    cmd_t c = { .op = 2 };
-    xQueueSend(s_q, &c, 0);
+    if (!s_playing) {
+        xQueueReset(s_q);
+        set_state("parado");
+        return;
+    }
+    s_stop_req = true;
 }

@@ -624,6 +624,58 @@ toda a interface".
 
 ## M5 — Áudio & player de música
 
+## Roadmap do áudio (definido 2026-10-07, base validada com QCY H3S UAC1)
+
+### M5a.2 — Controles e robustez do player (ABERTO — próximo)
+- [x] **Stop/next imediatos** (v5.5, bug da 14ª rodada): stop por flag
+      direta (fila só entre faixas); play com faixa tocando para a
+      atual antes; scan de alt settings pula a alt 0 zero-bandwidth
+      (mata os `Invalid alt setting` do driver).
+- [ ] Pause real: `uac_host_device_suspend/resume` (posição no WAV
+      preservada no player).
+- [ ] Volume: `uac_host_*volume*` com feature-detect (H3S timeout no
+      GET de volume → fallback mudo sem spam de log); slider na tela
+      Música persistido por device (VID:PID→volume em NVS).
+- [ ] Media keys do H3S/consumer controls HID (report descriptor:
+      play/pause/stop/next/vol) → comandos do player (seu HID subclass 0
+      proto 0 hoje é ignorado como teclado).
+- [ ] Repetir/aleatório mínimo (off/todas/uma) na tela Música.
+- Aceite: Parar/Próxima/pause imediatos; tecla do fone controla o PDA;
+  sem E-lines do driver no play.
+
+### M5a.3 — Hub USB (teclado + DAC juntos)
+- [ ] `CONFIG_USB_HOST_HUBS_SUPPORTED=y` (+ multi-level off); testes de
+  hot-plug em cadeia (hub→teclado+DAC), enumeração lenta, HWM das tasks
+  USB; regressão do quirk de primeira enumeração.
+- Aceite: teclado digita E música toca pelo hub, plug/unplug em
+  qualquer ordem sem crash.
+
+### M5b — Acervo de verdade: MP3 + playlists
+- [ ] Decoder MP3 fixed-point (libhelix via componente; sem FPU-heavy)
+  em task própria alimentando o mesmo sink UAC (abstração `audio_sink`
+  p/ não duplicar player por formato).
+- [ ] Playlists `.m3u` em `/pda/music/` + fila da tela Música; shuffle
+  entra aqui se não coube na M5a.2.
+- [ ] Metadata mínima (nome de arquivo basta p/ round 1; ID3 v2 depois).
+- Aceite: álbum MP3 do cartão toca com tela em standby (standby robusto
+  não mata áudio — aceite herdado do M5 original).
+
+### M5c — Saída local ES8311/I2S (quando o alto-falante JST chegar)
+- [ ] Bring-up I2S + ES8311 + NS4150 (PA_EN): beep de UI primeiro (prova
+  do caminho), depois o mesmo `audio_sink` do M5b.
+- [ ] Seletor de saída em Config → Tela/Sistema: UAC | interno | auto
+  (UAC se presente); mix de decisão documentado em USB.md/HARDWARE.md.
+- [ ] Conector de bateria: validação de carga/descarga com áudio tocando
+  (corrente do PA vs. IP5306 — limiar de auto-desligue!).
+- Aceite: mesma música alternando saídas sem restart; alto-falante com
+  bateria e USB desplugado.
+
+### M5d — Integrações (cola com M6)
+- [ ] Alarme/agenda (M6) tocando via sink local; wake por alarme com
+  áudio; ducking simples de volume.
+- [ ] Lua API `pda.audio.*` (play/stop/volume) p/ scripts do cartão.
+
+
 ### M5a.1 — Áudio USB: UAC + player WAV + tela Música (FEITO; aguardando hardware)
 - [x] `espressif/usb_host_uac ==1.5.0` como 2º client da Host Library
       (HID segue 1º; install único na usb_host_lib_task).
