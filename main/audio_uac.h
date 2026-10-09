@@ -42,6 +42,11 @@ bool audio_uac_paused(void);
 void audio_uac_pause(void);
 void audio_uac_resume(void);
 
+/** v5.8: volume/mute via control transfer em task descartável
+ *  (devices sem feature unit timeoutam ~5 s sem congelar UI/stream). */
+void audio_uac_volume_step(int delta);
+void audio_uac_mute_toggle(void);
+
 /** Basename da faixa atual ("" se nenhuma). */
 const char *audio_uac_track(void);
 

@@ -138,6 +138,20 @@ static void hid_keyboard_report_callback(const uint8_t *const data, int length)
         }
         if (usage == 0) return;          /* release: nada a fazer */
         if (act >= 0) { s_media_cb(act); return; }
+        /* M5a.2.2 (v5.8): mapa vendor Jieli/QCY H3S — codes de 1 byte
+         * capturados no log da 16ª rodada: 08=play/pause, 01=vol+,
+         * 02=vol-. Reports de 2 B com byte alto 0 e estes codes não
+         * colidem com usages reais do Consumer HUT (B5+ / E9+ / etc.).
+         * Long-press next/prev é processado DENTRO do fone (sem report). */
+        if (report_len == 2 && report[1] == 0) {
+            switch (report[0]) {
+            case 0x08: act = USB_MEDIA_PLAYPAUSE; break;
+            case 0x01: act = USB_MEDIA_VOL_UP; break;
+            case 0x02: act = USB_MEDIA_VOL_DOWN; break;
+            default: break;
+            }
+            if (act >= 0) { s_media_cb(act); return; }
+        }
     }
     if (report_len < 8) {
         /* M5a.2.1 (v5.7): diagnóstico p/ media keys do H3S — o formato

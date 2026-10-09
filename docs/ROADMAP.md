@@ -634,11 +634,15 @@ toda a interface".
 - [x] Pause real: `uac_host_device_suspend/resume` (posição =
       offset do arquivo; loop de write espera pausado) + botão
       Pausar/Seguir na tela Música (v5.6).
-- [ ] Volume: `uac_host_*volume*` com feature-detect (H3S timeout no
-      GET de volume → fallback mudo sem spam de log); slider na tela
-      Música persistido por device (VID:PID→volume em NVS). ADIADO p/
-      v5.7: nenhum device de teste atual responde GET de volume.
-- [x] Media keys HID consumer control (v5.6): reports curtos
+- [x] Volume/mute (v5.8): teclas vol±/mute do H3S chamam
+      `uac_host_device_set_volume/set_mute` em task descartável
+      (timeout de ~5 s em device sem feature unit não congela UI nem
+      stream); feature-detect: 1º set com erro marca `s_vol_bad` e
+      silencia; auto-aplica no start só após 1 set ok. Slider na tela +
+      persistência por VID:PID seguem ADIADOS (M5a.2.x).
+- [x] Media keys HID consumer control (v5.6) + mapa vendor Jieli/QCY
+      (v5.8: codes 08/01/02 de 2 B = play-pause/vol+/vol−, evidência do
+      log da 16ª rodada; long-press next/prev é interno do fone): reports curtos
       (2–3 B) com usages HUT 0x0C (B5/B6/B7/CD/E9/EA/E2) viram comandos
       do player via `usb_hid_keyboard_set_media_cb`; boot keyboard (8 B)
       intocado; vale p/ H3S E p/ teclados com interface de mídia.

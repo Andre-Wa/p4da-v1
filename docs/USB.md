@@ -174,3 +174,15 @@ plugar device SEM classe de áudio (ex.: teclado) — é o driver dizendo
   log `usb_hid_kbd: report descartado: len=N bytes=..` (1/s) coleta o
   pattern com uma pressionada por tecla p/ o parse certo sair com
   evidência na próxima rodada.
+
+### M5a.2.2 (v5.8) — pause-aware retry, vendor map, volume
+- Retry de write não conta falhas com `s_paused` ativo (EP suspenso =>
+  write falha por design); espera o resume no mesmo chunk (posição
+  preservada duas vezes: offset do arquivo + chunk não consumido).
+- Media keys H3S: mapa vendor Jieli (2 B, byte alto 0): 08 play/pause,
+  01 vol+, 02 vol−; long-press next/prev é processado no próprio fone
+  (sem report) — documentado, não é bug nosso.
+- Volume/mute: `set_volume/set_mute` em task `au_vol` descartável;
+  device sem feature unit (H3S) timeouta ~5 s uma vez e vira
+  `s_vol_bad` (silêncio posterior); auto-aplica no start só após
+  sucesso comprovado (`s_vol_ok`).

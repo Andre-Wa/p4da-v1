@@ -1662,9 +1662,17 @@ extern "C" void app_main(void)
             case USB_MEDIA_STOP:
                 audio_uac_stop();
                 break;
+            case USB_MEDIA_VOL_UP:
+                audio_uac_volume_step(+10);
+                break;
+            case USB_MEDIA_VOL_DOWN:
+                audio_uac_volume_step(-10);
+                break;
+            case USB_MEDIA_MUTE:
+                audio_uac_mute_toggle();
+                break;
             default:
-                log_line("[audio] mídia: volume/mute ainda sem suporte "
-                         "(device ou rodada atual)", NULL);
+                log_line("[audio] mídia: usage desconhecido", NULL);
                 break;
             }
             push_mus_ui();

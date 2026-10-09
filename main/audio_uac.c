@@ -36,6 +36,12 @@ static volatile bool s_stop_req = false;
 static char s_devname[48] = "";
 static char s_track[64] = "";
 static char s_state[48] = "iniciando";
+/* volume/mute (v5.8): declarados no topo — do_play os usa antes da
+ * seção de volume (uso-antes-definição pegou no build de 2026-10-08). */
+static int s_vol_pct = 70;
+static bool s_vol_ok = false;     /* só auto-aplica após 1 set com sucesso */
+static bool s_vol_bad = false;    /* device sem feature unit: desiste */
+static bool s_muted = false;
 static uint8_t s_addr = 0, s_iface = 0;
 static audio_uac_event_cb s_cb = NULL;
 static void *s_ctx = NULL;
@@ -227,6 +233,8 @@ static void do_play(const char *path)
     if (uac_host_device_start(dev, &sc) != ESP_OK) {
         uac_host_device_close(dev); fclose(f); set_state("erro: start stream"); return;
     }
+    if (s_vol_ok && !s_vol_bad)
+        uac_host_device_set_volume(dev, (uint8_t)s_vol_pct);  /* best-effort */
     s_playing = true;
     s_paused = false;
     s_dev = dev;
@@ -255,7 +263,12 @@ static void do_play(const char *path)
             esp_err_t e = uac_host_device_write(dev, buf, n,
                                                 pdMS_TO_TICKS(2000));
             if (e == ESP_OK) break;
-            if (!s_present || s_stop_req || ++wfail >= 5) {
+            if (!s_present || s_stop_req) goto play_end;
+            /* v5.8: com pause ativo o EP está suspenso e o write falha
+             * POR DESIGN — esperar o resume, não contar retry (bug da
+             * 16ª rodada: 5 retries durante pause = "fim da faixa" e a
+             * música morria pausada). */
+            if (!s_paused && ++wfail >= 5) {
                 ESP_LOGW(TAG, "write: %s (%d retries) — fim da faixa",
                          esp_err_to_name(e), wfail);
                 goto play_end;
@@ -345,6 +358,58 @@ esp_err_t audio_uac_init(void)
 
 bool audio_uac_present(void) { return s_present; }
 const char *audio_uac_dev_name(void) { return s_devname; }
+/* ---------------- volume/mute (v5.8) ----------------
+ * Control transfer de volume em device sem feature unit (H3S) timeouta
+ * em ~5 s: NUNCA no caminho do stream/UI — task descartável própria. */
+typedef struct { int delta; bool mute; } volcmd_t;
+
+static void vol_task(void *arg)
+{
+    volcmd_t *c = (volcmd_t *)arg;
+    uac_host_device_handle_t dev = (uac_host_device_handle_t)s_dev;
+    if (c->mute) {
+        if (dev && s_playing && !s_vol_bad) {
+            s_muted = !s_muted;
+            if (uac_host_device_set_mute(dev, s_muted) != ESP_OK) {
+                s_vol_bad = true;
+                ESP_LOGW(TAG, "mute não suportado neste device");
+            } else {
+                ESP_LOGI(TAG, "mute %s", s_muted ? "on" : "off");
+            }
+        }
+    } else {
+        s_vol_pct += c->delta;
+        if (s_vol_pct < 0) s_vol_pct = 0;
+        if (s_vol_pct > 100) s_vol_pct = 100;
+        if (dev && s_playing && !s_vol_bad) {
+            esp_err_t e = uac_host_device_set_volume(dev, (uint8_t)s_vol_pct);
+            if (e != ESP_OK) {
+                s_vol_bad = true;
+                ESP_LOGW(TAG, "volume não suportado neste device (%s)",
+                         esp_err_to_name(e));
+            } else {
+                s_vol_ok = true;
+                ESP_LOGI(TAG, "volume %d%%", s_vol_pct);
+            }
+        } else {
+            ESP_LOGI(TAG, "volume %d%% (aplica no próximo play)", s_vol_pct);
+        }
+    }
+    free(c);
+    vTaskDelete(NULL);
+}
+
+static void vol_spawn(int delta, bool mute)
+{
+    volcmd_t *c = calloc(1, sizeof(*c));
+    if (!c) return;
+    c->delta = delta; c->mute = mute;
+    if (xTaskCreate(vol_task, "au_vol", 3072, c, 3, NULL) != pdPASS) free(c);
+}
+
+void audio_uac_volume_step(int delta) { vol_spawn(delta, false); }
+void audio_uac_mute_toggle(void) { vol_spawn(0, true); }
+
 bool audio_uac_playing(void) { return s_playing; }
 bool audio_uac_paused(void) { return s_paused; }
 
