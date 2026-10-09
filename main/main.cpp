@@ -1156,12 +1156,17 @@ static void refresh_music_list(void)
     });
 }
 
-static void music_play_idx(int i)
+static void music_play_idx(int i, bool fresh)
 {
     if (i < 0 || (size_t)i >= g_mus_names.size()) return;
     g_mus_cur = i;
     std::string full = std::string(pda_root()) + "/music/" + g_mus_names[i];
-    spawn_thread("io_music", 8192, [full]() { audio_uac_play(full.c_str()); });
+    /* M5a.2.4: fresh = tap na lista/navegação (do zero); fresh=false =
+     * play/pause do fone com player parado (retoma ponto de unplug). */
+    spawn_thread("io_music", 8192, [full, fresh]() {
+        if (fresh) audio_uac_play_fresh(full.c_str());
+        else audio_uac_play(full.c_str());
+    });
 }
 
 static void session_save(void *ctx)
@@ -1623,12 +1628,12 @@ extern "C" void app_main(void)
             push_fm_ui();
         }
     });
-    ui->on_mus_play([](int i) { activity(); music_play_idx(i); push_mus_ui(); });
+    ui->on_mus_play([](int i) { activity(); music_play_idx(i, true); push_mus_ui(); });
     ui->on_mus_stop([]() { activity(); audio_uac_stop(); push_mus_ui(); });
     ui->on_mus_next([]() {
         activity();
         if (!g_mus_names.empty())
-            music_play_idx((g_mus_cur + 1) % (int)g_mus_names.size());
+            music_play_idx((g_mus_cur + 1) % (int)g_mus_names.size(), true);
         push_mus_ui();
     });
     ui->on_mus_refresh([]() { activity(); refresh_music_list(); });
@@ -1647,17 +1652,17 @@ extern "C" void app_main(void)
                 if (audio_uac_playing()) {
                     if (audio_uac_paused()) audio_uac_resume(); else audio_uac_pause();
                 } else if (!g_mus_names.empty()) {
-                    music_play_idx(g_mus_cur >= 0 ? g_mus_cur : 0);
+                    music_play_idx(g_mus_cur >= 0 ? g_mus_cur : 0, false);
                 }
                 break;
             case USB_MEDIA_NEXT:
                 if (!g_mus_names.empty())
-                    music_play_idx((g_mus_cur + 1) % (int)g_mus_names.size());
+                    music_play_idx((g_mus_cur + 1) % (int)g_mus_names.size(), true);
                 break;
             case USB_MEDIA_PREV:
                 if (!g_mus_names.empty())
                     music_play_idx((g_mus_cur - 1 + (int)g_mus_names.size()) %
-                                   (int)g_mus_names.size());
+                                   (int)g_mus_names.size(), true);
                 break;
             case USB_MEDIA_STOP:
                 audio_uac_stop();

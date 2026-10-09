@@ -38,6 +38,8 @@ static char s_track[64] = "";
 static char s_state[48] = "iniciando";
 /* volume/mute (v5.8): declarados no topo — do_play os usa antes da
  * seção de volume (uso-antes-definição pegou no build de 2026-10-08). */
+static char s_resume_path[144];   /* M5a.2.3: retomar após unplug/erro */
+static uint32_t s_resume_off;
 static int s_vol_pct = 70;
 static bool s_vol_ok = false;     /* só auto-aplica após 1 set com sucesso */
 static bool s_vol_bad = false;    /* device sem feature unit: desiste */
@@ -234,7 +236,8 @@ static void do_play(const char *path)
         uac_host_device_close(dev); fclose(f); set_state("erro: start stream"); return;
     }
     if (s_vol_ok && !s_vol_bad)
-        uac_host_device_set_volume(dev, (uint8_t)s_vol_pct);  /* best-effort */
+        uac_host_device_set_volume(dev,
+            (uint8_t)(s_vol_pct == 100 ? 99 : s_vol_pct));   /* best-effort */
     s_playing = true;
     s_paused = false;
     s_dev = dev;
@@ -245,6 +248,14 @@ static void do_play(const char *path)
     fseek(f, doff, SEEK_SET);
     uint8_t buf[4096];
     uint32_t left = dlen;
+    /* M5a.2.3: unplug/erro no meio da faixa guardou o offset consumido;
+     * mesmo caminho de novo = retoma de onde parou. */
+    if (s_resume_path[0] && !strcmp(s_resume_path, path) && s_resume_off < dlen) {
+        fseek(f, doff + (long)s_resume_off, SEEK_SET);
+        left = dlen - s_resume_off;
+        ESP_LOGI(TAG, "retomando \"%s\" de +%lu s",
+                 s_track, (unsigned long)(s_resume_off / (rate * ch * 2u)));
+    }
     while (!s_stop_req && s_present && left > 0) {
         /* pause: segura o fluxo sem fechar o device (posição = offset
          * do arquivo, preservada); stop/unplug furam a espera. */
@@ -278,6 +289,17 @@ static void do_play(const char *path)
         left -= n;
     }
 play_end:
+    /* M5a.2.3: unplug (!s_present) no meio = guarda ponto p/ retomar;
+     * stop explícito ou fim natural = limpa. */
+    if (!s_present && left > 0) {
+        snprintf(s_resume_path, sizeof(s_resume_path), "%s", path);
+        s_resume_off = dlen - left;
+    } else if (s_stop_req || left == 0) {
+        if (s_resume_path[0] && !strcmp(s_resume_path, path)) {
+            s_resume_path[0] = 0;
+            s_resume_off = 0;
+        }
+    }
     vTaskDelay(pdMS_TO_TICKS(120));   /* drain do ring do driver */
     if (s_paused && s_present) uac_host_device_resume(dev);
     s_paused = false;
@@ -382,7 +404,11 @@ static void vol_task(void *arg)
         if (s_vol_pct < 0) s_vol_pct = 0;
         if (s_vol_pct > 100) s_vol_pct = 100;
         if (dev && s_playing && !s_vol_bad) {
-            esp_err_t e = uac_host_device_set_volume(dev, (uint8_t)s_vol_pct);
+            /* H3S (e clones Jieli?): índice 100% da curva = MUTE no
+             * device (relato 17ª rodada: som some em 100%, volta em
+             * 90%). Envia no máx. 99; o pct cheio fica só no log/UI. */
+            uint8_t v = (uint8_t)(s_vol_pct == 100 ? 99 : s_vol_pct);
+            esp_err_t e = uac_host_device_set_volume(dev, v);
             if (e != ESP_OK) {
                 s_vol_bad = true;
                 ESP_LOGW(TAG, "volume não suportado neste device (%s)",
@@ -390,6 +416,16 @@ static void vol_task(void *arg)
             } else {
                 s_vol_ok = true;
                 ESP_LOGI(TAG, "volume %d%%", s_vol_pct);
+                /* M5a.2.4: o mínimo da curva do device não é silêncio
+                 * (H3S: 0% ainda audível, 0–10% indistinguíveis); 0% vira
+                 * mute real via feature unit. */
+                if (s_vol_pct == 0) {
+                    if (uac_host_device_set_mute(dev, true) == ESP_OK)
+                        s_muted = true;
+                } else if (s_muted) {
+                    if (uac_host_device_set_mute(dev, false) == ESP_OK)
+                        s_muted = false;
+                }
             }
         } else {
             ESP_LOGI(TAG, "volume %d%% (aplica no próximo play)", s_vol_pct);
@@ -435,6 +471,16 @@ const char *audio_uac_state(void) { return s_state; }
 void audio_uac_set_event_cb(audio_uac_event_cb cb, void *ctx)
 {
     s_cb = cb; s_ctx = ctx;
+}
+
+esp_err_t audio_uac_play_fresh(const char *path)
+{
+    /* tap explícito na lista = começa do zero */
+    if (s_resume_path[0] && !strcmp(s_resume_path, path)) {
+        s_resume_path[0] = 0;
+        s_resume_off = 0;
+    }
+    return audio_uac_play(path);
 }
 
 esp_err_t audio_uac_play(const char *path)

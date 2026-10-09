@@ -32,6 +32,9 @@ const char *audio_uac_dev_name(void);
 /** Pede reprodução de um WAV (PCM16). Fila de 1 comando; trocadireto. */
 esp_err_t audio_uac_play(const char *path);
 
+/** M5a.2.3: play SEM retomar ponto de unplug (tap explícito na lista). */
+esp_err_t audio_uac_play_fresh(const char *path);
+
 /** Para a reprodução atual (device fica fechado até o próximo play). */
 void audio_uac_stop(void);
 

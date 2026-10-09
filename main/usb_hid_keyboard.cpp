@@ -159,6 +159,7 @@ static void hid_keyboard_report_callback(const uint8_t *const data, int length)
          * dos reports que não são teclado nem consumer conhecido. */
         static int64_t s_last_dbg = 0;
         const int64_t now = esp_timer_get_time();
+        if (length == 0) return;   /* report vazio de unplug: ruído */
         if (now - s_last_dbg > 1000000) {
             s_last_dbg = now;
             ESP_LOGI(TAG, "report descartado: len=%d bytes=%02x %02x %02x %02x",

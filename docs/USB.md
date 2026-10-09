@@ -186,3 +186,20 @@ plugar device SEM classe de áudio (ex.: teclado) — é o driver dizendo
   device sem feature unit (H3S) timeouta ~5 s uma vez e vira
   `s_vol_bad` (silêncio posterior); auto-aplica no start só após
   sucesso comprovado (`s_vol_ok`).
+
+### M5a.2.3 (v5.9) — mute em 100% e resume de posição
+- H3S: SET volume funciona (0–90% audíveis); em 100% o device muta
+  (índice máx. da curva = mute). Workaround: enviamos no máx. 99; o
+  percentual "cheio" permanece só no log/UI (`audio_uac: volume 100%` +
+  driver `Set volume 99%`).
+- Resume de posição: unplug/erro no meio da faixa guarda
+  `s_resume_path/s_resume_off`; próximo play do mesmo caminho retoma
+  (log `retomando "…" de +N s`); tap na lista = play_fresh (do zero);
+  Parar ou fim natural limpam o ponto.
+
+### M5a.2.4 (v5.10) — semântica de resume e mute em 0%
+- `music_play_idx(i, fresh)`: fresh=true (tap na lista, Próxima,
+  anterior, media-next/prev) começa do zero; fresh=false (play/pause do
+  fone com player parado) retoma o ponto salvo de unplug/erro.
+- Volume 0% → `set_mute(true)` (curva do H3S: mín. audível, 0–10%
+  indistinguíveis = característica do device); >0% → unmute.
