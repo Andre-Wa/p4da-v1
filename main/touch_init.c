@@ -19,6 +19,9 @@
 #include "esp_lcd_panel_io.h"
 
 static const char *TAG = "touch_init";
+static i2c_master_bus_handle_t s_bus = NULL;   /* M5c.1: compartilhado c/ ES8311 */
+
+i2c_master_bus_handle_t board_i2c_bus(void) { return s_bus; }
 
 /* M4.14.3: cegueira de toque no STANDBY com wake_on_touch OFF. O caminho
  * de wake pela ISR já era gateado (M4.14), mas o toque em ELEMENTO
@@ -76,6 +79,7 @@ esp_err_t board_touch_init(esp_lcd_touch_handle_t *out_touch)
     };
     i2c_master_bus_handle_t bus_handle = NULL;
     ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_config, &bus_handle), TAG, "criar barramento I2C");
+    s_bus = bus_handle;
 
     esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
     tp_io_config.scl_speed_hz = BOARD_I2C_CLK_HZ;

@@ -23,6 +23,7 @@
 #include "power_mgmt.h"
 #include "wifi_net.h"
 #include "audio_uac.h"
+#include "audio_i2s.h"
 #include "nvs_flash.h"
 
 #include "esp_log.h"
@@ -1628,6 +1629,10 @@ extern "C" void app_main(void)
             push_fm_ui();
         }
     });
+    ui->on_cfg_test_speaker([]() {
+        activity();
+        spawn_thread("spk_test", 6144, []() { audio_i2s_beep(1200); });
+    });
     ui->on_mus_play([](int i) { activity(); music_play_idx(i, true); push_mus_ui(); });
     ui->on_mus_stop([]() { activity(); audio_uac_stop(); push_mus_ui(); });
     ui->on_mus_next([]() {
@@ -1906,6 +1911,7 @@ extern "C" void app_main(void)
      * replace sem assert numa rodada anterior (âncora errada: a chamada
      * do HID leva lambdas). Sem isto o driver NUNCA instalava — log da
      * 13ª rodada não tinha uma linha de audio_uac. */
+    audio_i2s_init();   /* M5c.1: falante local (ES8311+NS4150) */
     audio_uac_set_event_cb([](void *) {
         slint::invoke_from_event_loop([] { push_mus_ui(); });
     }, NULL);

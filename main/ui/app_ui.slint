@@ -147,6 +147,7 @@ export component AppWindow inherits Window {
     in-out property <string> cfg-accent: "cyan";
     in-out property <bool> cfg-wifi-on: true;
     callback cfg-set-wifi-on(bool);
+    callback cfg-test-speaker();
     init => { Theme.accent = root.cfg-accent; }
     changed cfg-accent => { Theme.accent = root.cfg-accent; }
     in-out property <bool> cfg-boot-standby: false;
@@ -367,6 +368,7 @@ export component AppWindow inherits Window {
                 boot-standby <=> root.cfg-boot-standby;
                 wifi-on <=> root.cfg-wifi-on;
                 set-wifi-on(b) => { root.cfg-set-wifi-on(b); }
+                test-speaker => { root.cfg-test-speaker(); }
                 osk-auto <=> root.cfg-osk-auto;
                 light-sleep <=> root.cfg-light-sleep;
                 store-info: root.cfg-store-info;

@@ -668,7 +668,7 @@ toda a interface".
 - Aceite: álbum MP3 do cartão toca com tela em standby (standby robusto
   não mata áudio — aceite herdado do M5 original).
 
-### M5c — Saída local ES8311/I2S (quando o alto-falante JST chegar)
+### M5c — Saída local ES8311/I2S (quando o alto-falante JST chegar) — ver M5c.1 abaixo
 - [ ] Bring-up I2S + ES8311 + NS4150 (PA_EN): beep de UI primeiro (prova
   do caminho), depois o mesmo `audio_sink` do M5b.
 - [ ] Seletor de saída em Config → Tela/Sistema: UAC | interno | auto

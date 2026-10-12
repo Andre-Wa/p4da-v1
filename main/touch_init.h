@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_lcd_touch.h"
+#include "driver/i2c_master.h"
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -13,6 +14,9 @@ extern "C" {
  * slint_esp_init() espera.
  */
 esp_err_t board_touch_init(esp_lcd_touch_handle_t *out_touch);
+
+/** M5c.1: o barramento I2C compartilhado (touch + ES8311). */
+i2c_master_bus_handle_t board_i2c_bus(void);
 
 #ifdef __cplusplus
 }

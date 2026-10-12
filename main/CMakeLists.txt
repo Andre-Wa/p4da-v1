@@ -10,6 +10,7 @@ idf_component_register(
         "power_mgmt.c"
         "wifi_net.c"
         "audio_uac.c"
+        "audio_i2s.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_lcd
