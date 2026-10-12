@@ -145,6 +145,26 @@ Não são regressões do M4.13: são limites conhecidos do modo robusto
 4. Se HIBERNATE ficar > ~1 mA, investigar rails sempre-vivos (TLV62569, IP5306
    quiescente) — aí é limite de placa, não de firmware.
 
+## Bateria: nível em % (BAT.0, v5.12.0) e calibração (BAT.1)
+
+Desde a v5.12.0 a status bar mostra % real: divisor da folha 03
+(BAT+ → R52 68K → nó → R57 100K → GND; nó → R55 0R → GPIO53 = ADC2_CH4),
+lido por `main/battery.c` (topologia e caveats em docs/HARDWARE.md §
+"Nível de bateria: divisor no GPIO53"). O log periódico
+`battery: NN% | mV | nó mV | raw` é a matéria-prima da calibração.
+
+**BAT.1 — calibrar e validar (com bateria de verdade, sem USB):**
+1. Multímetro na bateria + `battery:` no log, em repouso, a cada ~10%:
+   ajustar `s_curve` (main/battery.c) aos pares medidos.
+2. Conferir o fator do divisor: `V_bat/V_nó` medido deve dar ~1.68
+   (tolerância dos resistores); se divergir >2%, ajustar
+   `BOARD_BATT_DIV_R_TOP_K/BOT_K` no board_config.h.
+3. Com o log de % ao longo de uma descarga completa, estimar autonomia
+   por degrau (ACTIVE/DIM/STANDBY) — fecha o "Estágio 0 — MEDIR" sem
+   amperímetro para os números de USO (não de corrente).
+4. Anotar o comportamento em carga: durante CC/CV a leitura lê alto de
+   propósito; "100%" só é confiável em repouso pós-carga.
+
 ## SD × light sleep: por que remontamos no wake
 
 Medido em hardware (2026-09-22): após `STANDBY`, qualquer I/O no cartão
@@ -287,3 +307,18 @@ not designed with deep sleep in mind" — https://github.com/espressif/esp-idf/i
 [11] Arduino forum: IP5306 I2C e auto-shutdown configurável (~30 s) — https://forum.arduino.cc/t/using-esp32-with-ip5306-i2c-power-management-and-voltage-protection/1435971
 [12] esp-hosted-mcu exemplo host_network_split__power_save (lifecycle do
 host power save) — https://github.com/espressif/esp-hosted-mcu/blob/main/examples/host_network_split__power_save/README_light_sleep.md
+[5] Esquemático GUITION JC4880P443C_I_W, folha 03 "Expand IO" (divisor de
+BAT+ R52 68K/R57 100K → GPIO53): repo de notas de campo da comunidade
+ultramcu/guition-jc4880p443c-i-w (schematic/03-*.webp) —
+https://github.com/ultramcu/guition-jc4880p443c-i-w
+[6] Register file IP5306 (I2C, V1.21, Injoinic): reg 0x70/0x71/0x72/0x77
+(carga/cheia/carga-leve/tecla) e o aviso de que o chip NÃO tem tensão/
+corrente internos — https://done.land/assets/files/ip5306_i2c_registers.pdf
+[7] done.land "IP5306 I2C": versão padrão do IP5306 NÃO implementa I2C
+(só variante custom, pinos L1/L2/L3; aqui NC) —
+https://done.land/components/power/powersupplies/battery/chargers/charge-discharge/ip5306/ip5306i2c/
+[8] Datasheet ESP32-P4 (Espressif): dois SAR ADC de 12 bits, 14 canais —
+https://documentation.espressif.com/esp32-p4_datasheet_en.pdf
+[9] IDF v5.5.1: soc/adc_channel.h do esp32p4 (GPIO53 = ADC2_CHANNEL_4) e
+exemplo examples/peripherals/adc/oneshot_read (padrão de calibração
+usado em main/battery.c).

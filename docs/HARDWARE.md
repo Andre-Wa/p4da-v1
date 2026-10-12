@@ -33,7 +33,7 @@ Onde protótipo e placa real divergiam, **a placa real prevalece** (marcado [FIX
 | LED / RS-485 TX | — | 26 | NEW |
 | UART0 console | TX / RX | 37 / 38 | OK |
 | USB | HS = OTG (teclado) · FS = Serial-JTAG (flash/log) | — | OK |
-| Bateria | IP5306 (sem telemetria!) | CN4 MX1.25 | [HW?] ver abaixo |
+| Bateria | IP5306 (carga, sem telemetria) + divisor p/ ADC | CN4 MX1.25 + GPIO53 | [NEW-BAT.0] ver abaixo |
 
 ## Achados que mudam decisões de projeto
 
@@ -47,10 +47,18 @@ Onde protótipo e placa real divergiam, **a placa real prevalece** (marcado [FIX
    INT do touch (21) estão fora → deep sleep = "desligar" (volta no power-on).
    Light sleep aceita wake por qualquer GPIO → é o degrau de standby usável.
    Detalhes e consequências: `docs/POWER.md`.
-3. **IP5306 não tem telemetria.** Sem I²C, sem divisor de VOUT-BAT para ADC do
-   P4 na folha 02 do esquemático. Nível de bateria = não medível por software
-   hoje; status bar mostra `--`. Opções futuras: confirmar folha 05, ou mod de
-   hardware (divisor p/ um ADC livre), ou aceitar só os LEDs do IP5306.
+3. **O IP5306 não tem telemetria — mas a placa TEM divisor de bateria.**
+   O IP5306 padrão não implementa I²C (só a variante customizada
+   "IP5306_I2C", nos pinos L1/L2/L3, aqui NC), e mesmo essa variante NÃO
+   expõe tensão/corrente: só flags de carga/cheia/carga-leve/tecla
+   (register file V1.21: reg 0x70/0x71/0x72/0x77). A folha 03 do
+   esquemático ("Expand IO"), porém, traz um divisor do rail da bateria:
+   BAT+ → R52 68K → nó → R57 100K → GND (C61 10nF no nó), nó → R55 0R →
+   **GPIO53 = ADC2_CH4 do P4** (Wi-Fi/BT rodam no C6, então o ADC2 do P4
+   está livre). Desde a v5.12.0 (BAT.0) `main/battery.c` lê esse nó e a
+   status bar mostra % real. A análise antiga (v5.11.x) olhou só a folha
+   02 e concluiu "não medível por software" — estava incompleta, não
+   errada no IP5306: o que media é o divisor, não o charger.
 4. **Wi-Fi exige reflash do C6.** O slave ESP-Hosted de fábrica (2.3.0) não casa
    com host ~2.12 (`Version mismatch`, drops de SDIO/`ASSOC_LEAVE`). Procedimento
    em `tools/flash_c6_wifi.sh` (UART direto no header JP1, **com o P4 haltado**).
@@ -109,6 +117,38 @@ Onde protótipo e placa real divergiam, **a placa real prevalece** (marcado [FIX
 
 MX1.25 2 pinos, trava para cima, furos para você: **esquerda = BAT− (preto)**,
 **direita = BAT+ (vermelho)**. Inverter alimenta o IP5306 ao contrário.
+
+## Nível de bateria: divisor no GPIO53 (BAT.0, v5.12.0)
+
+Folha 03 do esquemático ("Expand IO"):
+
+```
+BAT+ --R52 68K--+--R57 100K--GND     C61 10nF no nó (anti-ruído)
+                |
+                +--R55 0R-- GPIO53   (ADC2_CHANNEL_4, atten 12 dB)
+```
+
+`main/battery.c` (task "battery", poll 4 s, 8 amostras, média, EMA 1/4):
+`V_bat = V_nó × (68+100)/100 = V_nó × 1.68`; % por curva LiPo típica sem
+carga (piecewise-linear em `s_curve`, calibrar em BAT.1). Calibração eFuse
+line-fitting quando o chip tiver; sem eFuse, fallback linear ~3.1 V FS @
+12 dB (mesmo padrão do exemplo oficial `oneshot_read` do IDF).
+
+Comportamentos esperados (não são bugs):
+- **Em carga** a leitura reflete a tensão de carga (lê alto, ~4.2 V no
+  topo): o divisor está do lado da bateria, e o IP5306 eleva a bateria
+  durante CC/CV.
+- **Sob carga pesada** (tela + falante + Wi-Fi) a tensão cede pela
+  resistência interna da célula: o % lê pessimista e recupera em repouso.
+- O divisor consome ~25 µA permanentes (4.2 V / 168 K) — irrelevante.
+- Precisão de 1ª rodada: resistores 1% + ADC sem calibração eFuse podem
+  somar alguns %; o log periódico (`battery: NN% | mV | nó mV | raw`) dá
+  os números para calibrar contra multímetro (docs/POWER.md, BAT.1).
+
+O que o IP5306 ainda é o único que sabe: estado de carga/cheia/carga-leve
+e a tecla BF2 — e só na variante custom com I²C (aqui NC). Para o PDA, o
+divisor cobre o que importa (nível); o corte por carga leve continua
+descrito em docs/POWER.md.
 
 ## DPI + DMA2D: por que `use_dma2d = false`
 

@@ -24,6 +24,7 @@
 #include "wifi_net.h"
 #include "audio_uac.h"
 #include "audio_i2s.h"
+#include "battery.h"
 #include "nvs_flash.h"
 
 #include "esp_log.h"
@@ -250,6 +251,17 @@ static void update_clock(void)
     default: pwr = "ATIVO"; break;
     }
     g_ui->set_status_pwr(slint::SharedString(pwr));
+
+    /* BAT.0: status bar de bateria a cada ~4 s, só lendo caches da task
+     * "battery" (nenhum I2C/ADC no caminho do tick do Slint). */
+    static int64_t s_batt_tick = -10;
+    const int64_t now_s = esp_timer_get_time() / 1000000LL;
+    if (now_s - s_batt_tick >= 4) {
+        s_batt_tick = now_s;
+        char bstat[16];
+        battery_status_str(bstat, sizeof(bstat));
+        g_ui->set_status_batt(slint::SharedString(bstat));
+    }
 }
 
 /* ================================================================== */
@@ -1264,10 +1276,18 @@ static void push_settings_to_ui(void)
     g_ui->set_cfg_store_info(slint::SharedString(buf));
     g_ui->set_status_store(slint::SharedString(buf));
     g_ui->set_status_store_icon(slint::SharedString(storage_sd_mounted() ? "sd" : "int"));
-    g_ui->set_cfg_batt_info(slint::SharedString("nao medivel (IP5306)"));
+    /* BAT.0 (v5.12.0): a placa TEM divisor de bateria (folha 03: R52 68K /
+     * R57 100K -> GPIO53 = ADC2_CH4). Antes desta versão a status bar
+     * mostrava "--" fixo porque a análise antiga (folha 02) não achou o
+     * divisor — main/battery.c lê o nó e converte p/ %/mV. */
+    char bdesc[128];
+    battery_describe(bdesc, sizeof(bdesc));
+    g_ui->set_cfg_batt_info(slint::SharedString(bdesc));
     g_ui->set_cfg_wifi_info(slint::SharedString(
         wifi_net_connected() ? wifi_net_ssid() : "offline"));
-    g_ui->set_status_batt(slint::SharedString("--"));
+    char bstat[16];
+    battery_status_str(bstat, sizeof(bstat));
+    g_ui->set_status_batt(slint::SharedString(bstat));
 }
 
 /* ================================================================== */
@@ -1912,6 +1932,7 @@ extern "C" void app_main(void)
      * do HID leva lambdas). Sem isto o driver NUNCA instalava — log da
      * 13ª rodada não tinha uma linha de audio_uac. */
     audio_i2s_init();   /* M5c.1: falante local (ES8311+NS4150) */
+    battery_start();    /* BAT.0 (v5.12.0): divisor de bateria GPIO53/ADC2_CH4 */
     audio_uac_set_event_cb([](void *) {
         slint::invoke_from_event_loop([] { push_mus_ui(); });
     }, NULL);

@@ -11,6 +11,7 @@
  */
 
 #include "audio_uac.h"
+#include "usb_host_state.h"
 #include "usb/uac_host.h"
 
 #include "esp_log.h"
@@ -342,6 +343,13 @@ static void init_task(void *arg)
         .callback_arg = NULL,
     };
     esp_err_t e = ESP_FAIL;
+    /* v5.12.0: espera a Host Library existir (o HID instala) ANTES do 1º
+     * uac_host_install(): sem isto o 1º attempt falhava e o componente
+     * logava E "Unable to register USB Host client" em todo boot.
+     * Bounded (5 s): se o HID nunca subir, cai no retry de sempre. */
+    for (int i = 0; i < 100 && !usb_host_state_ready(); i++) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
     for (int i = 0; i < 50 && e != ESP_OK; i++) {   /* espera a Host Library */
         e = uac_host_install(&cfg);
         if (e != ESP_OK) vTaskDelay(pdMS_TO_TICKS(200));

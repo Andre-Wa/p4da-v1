@@ -11,6 +11,7 @@ idf_component_register(
         "wifi_net.c"
         "audio_uac.c"
         "audio_i2s.c"
+        "battery.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_lcd
@@ -31,6 +32,7 @@ idf_component_register(
         lwip
         esp_pm
         esp_timer
+        esp_adc
         pthread
 )
 

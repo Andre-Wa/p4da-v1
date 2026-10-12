@@ -20,6 +20,7 @@
 #pragma once
 
 #include "driver/gpio.h"
+#include "hal/adc_types.h"   /* BAT.0: adc_unit_t/adc_channel_t do sentido de bateria */
 
 /* ---------------------------------------------------------------------
  * I2C compartilhado (touch GT911 + codec ES8311)              [OK]
@@ -131,11 +132,24 @@
  * --------------------------------------------------------------------- */
 
 /* ---------------------------------------------------------------------
- * Bateria — IP5306                                           [HW?]
- * O IP5306 NÃO tem I2C nem telemetria: só LEDs de carga e pino KEY.
- * Não há divisor de VOUT-BAT roteado a um ADC do P4 na folha 02 do
- * esquemático. Até confirmar (folha 05 / medição), o sistema trata
- * "nível de bateria" como NÃO DISPONÍVEL e exibe "—" na status bar.
- * Se um dia houver divisor, basta ler o canal ADC correspondente aqui.
+ * Bateria — divisor de sentido (BAT.0, v5.12.0)              [NEW]
+ * Folha 03 do esquemático ("Expand IO"): o rail da bateria TEM divisor
+ * resistivo roteado ao P4:
+ *     BAT+ --R52 68K--+--R57 100K--GND   (C61 10nF no nó)
+ *                     +--R55 0R-- GPIO53
+ * GPIO53 = ADC2_CHANNEL_4 no ESP32-P4 (soc/adc_channel.h, IDF 5.5.1).
+ * O Wi-Fi/BT roda no C6 (ESP-Hosted), então o ADC2 do P4 está livre —
+ * a arbitragem ADC2-vs-WiFi só existe com Wi-Fi no MESMO chip.
+ *
+ * O IP5306 em si segue SEM telemetria de nível: a versão padrão não tem
+ * I2C (só a variante custom IP5306_I2C, pinos L1/L2/L3, aqui NC) e mesmo
+ * essa variante não expõe tensão/corrente — só flags carga/cheia/carga-
+ * leve/tecla (register file V1.21: 0x70/0x71/0x72/0x77). O que medimos é
+ * a bateria no divisor, direto no SAR ADC (main/battery.c).
+ * Durante carga a leitura reflete a tensão de carga (lê alto): esperado.
  * --------------------------------------------------------------------- */
-#define BOARD_BATT_ADC_CHANNEL   (-1)   /* -1 = sem medição disponível */
+#define BOARD_BATT_SENSE_GPIO   GPIO_NUM_53
+#define BOARD_BATT_ADC_UNIT     ADC_UNIT_2
+#define BOARD_BATT_ADC_CHANNEL  ADC_CHANNEL_4
+#define BOARD_BATT_DIV_R_TOP_K  68    /* R52 */
+#define BOARD_BATT_DIV_R_BOT_K  100   /* R57 */

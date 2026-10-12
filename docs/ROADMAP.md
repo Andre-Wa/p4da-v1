@@ -12,7 +12,8 @@ Nada de M(n+1) começa com pendência de M(n).
 - [x] Notas (criar/editar/salvar/apagar) na raiz ativa
 - [x] Energia em degraus: DIM → STANDBY (light sleep, wake botão/toque) → HIBERNATE
       (deep sleep c/ sessão restaurada); botões "Dormir agora"/"Hibernar"
-- [x] Status bar (uptime, armazenamento, bateria "--", estado de energia)
+- [x] Status bar (uptime, armazenamento, bateria % real via divisor GPIO53
+      desde a v5.12.0/BAT.0 — antes "--", estado de energia)
 - **Aceite**: boot sem cartão não trava; com cartão, tudo grava nele; standby
   acorda por botão; hibernate restaura a nota aberta; `exemplo.lua` roda sem derrubar.
 
@@ -669,14 +670,31 @@ toda a interface".
   não mata áudio — aceite herdado do M5 original).
 
 ### M5c — Saída local ES8311/I2S (quando o alto-falante JST chegar) — ver M5c.1 abaixo
-- [ ] Bring-up I2S + ES8311 + NS4150 (PA_EN): beep de UI primeiro (prova
-  do caminho), depois o mesmo `audio_sink` do M5b.
+- [x] Bring-up I2S + ES8311 + NS4150 (PA_EN): beep de UI primeiro (prova
+      do caminho) — **M5c.1 FEITO/validado em HW 2026-10-11 (v5.11.4)**:
+      beep 440 Hz audível sem ruído, touch vivo depois, UAC independente.
 - [ ] Seletor de saída em Config → Tela/Sistema: UAC | interno | auto
   (UAC se presente); mix de decisão documentado em USB.md/HARDWARE.md.
 - [ ] Conector de bateria: validação de carga/descarga com áudio tocando
   (corrente do PA vs. IP5306 — limiar de auto-desligue!).
 - Aceite: mesma música alternando saídas sem restart; alto-falante com
   bateria e USB desplugado.
+
+### BAT.0 — Telemetria de bateria (FEITO v5.12.0, 2026-10-12)
+- [x] Descoberta no esquemático: divisor de BAT+ na folha 03 ("Expand IO"):
+      R52 68K / R57 100K, C61 10nF, nó → R55 0R → GPIO53 = ADC2_CH4
+      (a análise antiga olhara só a folha 02 e dera "não medível").
+- [x] `main/battery.[ch]`: oneshot ADC2 @12 dB, calibração eFuse line-
+      fitting c/ fallback linear, 8 amostras + EMA, curva LiPo → %,
+      status bar e Config→Sistema ao vivo; log periódico p/ calibração.
+- [x] `tools/idfinit_check_adc.c`: repro host dos inicializadores esp_adc
+      (limpo; `-DREPRODUZ_BUG` = .chan no config line-fitting, falha).
+- [x] Higiene de log: some o `E i2s_common ...has not been enabled yet` por
+      beep (espelho de estado do canal em audio_i2s.c) e o `E uac-host:
+      Unable to register USB Host client` do boot (audio_uac espera
+      `usb_host_state_ready()` antes do 1º install).
+- [ ] **BAT.1**: calibração da curva/fator do divisor contra multímetro +
+      autonomia por degrau na bateria (docs/POWER.md §BAT.1).
 
 ### M5d — Integrações (cola com M6)
 - [ ] Alarme/agenda (M6) tocando via sink local; wake por alarme com
@@ -875,7 +893,9 @@ marcava rede BOA por AUTH_FAIL espúrio — log de 2026-10-05/06):
 - Medição real de corrente por degrau (`docs/POWER.md` → plano de medição)
 - Teardown completo do DSI no standby se light sleep passar de ~40 mA
 - Validação do INT do GT911 (GPIO21) para `wake_on_touch`
-- Confirmar possibilidade de medir bateria (folha 05 do esquemático) ou mod de divisor
+- ~~Confirmar possibilidade de medir bateria (folha 05 do esquemático) ou mod
+  de divisor~~ — **RESOLVIDO na v5.12.0/BAT.0**: o divisor existe (folha 03,
+  GPIO53/ADC2_CH4); resta calibrar (BAT.1, docs/POWER.md).
 
 ### M3b.1 — Correções da validação em hardware (2026-09-23)
 - [x] Picker: `Sobe` navega (antes cancelava o seletor, prendendo o usuário

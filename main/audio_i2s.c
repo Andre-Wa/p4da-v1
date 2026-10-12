@@ -28,6 +28,13 @@ static const char *TAG = "audio_i2s";
 static i2s_chan_handle_t s_tx = NULL;
 static esp_codec_dev_handle_t s_dev = NULL;
 static bool s_ready = false;
+/* Espelho do estado enable/disable do canal I2S TX. NÓS habilitamos antes
+ * de cada esp_codec_dev_open() e o componente desabilita no close(); sem
+ * este espelho o disable INTERNO do set_fmt() (audio_codec_data_i2s.c:
+ * "disable internally") bate num canal já desabilitado e loga
+ * "E i2s_common: i2s_channel_disable: the channel has not been enabled
+ * yet" a cada beep (visto no log de 2026-10-11). Ruído puro, mas some. */
+static bool s_chan_on = false;
 
 #define BEEP_RATE 44100
 
@@ -66,11 +73,14 @@ esp_err_t audio_i2s_init(void)
             .invert_flags = {0},        /* STRUCT de bitfields — nunca '= false' */
         },
     };
-    if (i2s_channel_init_std_mode(s_tx, &std_cfg) != ESP_OK ||
-        i2s_channel_enable(s_tx) != ESP_OK) {
-        ESP_LOGE(TAG, "init/enable do canal I2S falhou");
+    if (i2s_channel_init_std_mode(s_tx, &std_cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "init do canal I2S falhou");
         return ESP_FAIL;
     }
+    /* NÃO habilitar aqui de propósito: esp_codec_dev_open() faz
+     * disable→reconfig→enable internamente; habilitar agora só adiava o
+     * E-log do 2º beep em diante (ver s_chan_on). O beep habilita logo
+     * antes do open e o close devolve o canal desabilitado. */
 
     /* ---- interfaces do codec ---- */
     audio_codec_i2c_cfg_t i2c_cfg = {
@@ -127,10 +137,14 @@ esp_err_t audio_i2s_beep(int ms)
         .channel = 2,
         .bits_per_sample = 16,
     };
+    if (!s_chan_on) {
+        if (i2s_channel_enable(s_tx) == ESP_OK) s_chan_on = true;
+    }
     if (esp_codec_dev_open(s_dev, &fs) != ESP_OK) {
         ESP_LOGE(TAG, "codec open falhou");
         return ESP_FAIL;
     }
+    s_chan_on = true;   /* open religa o canal após o reconfig interno */
     const int total = BEEP_RATE * ms / 1000;
     int16_t buf[512];           /* 256 amostras estéreo */
     int pos = 0;
@@ -150,7 +164,8 @@ esp_err_t audio_i2s_beep(int ms)
         if (esp_codec_dev_write(s_dev, buf, (uint32_t)n * 4) != ESP_OK) break;
         pos += n;
     }
-    esp_codec_dev_close(s_dev);
+    esp_codec_dev_close(s_dev);   /* desabilita o canal internamente */
+    s_chan_on = false;
     ESP_LOGI(TAG, "beep 440 Hz %d ms no falante", ms);
     return ESP_OK;
 }

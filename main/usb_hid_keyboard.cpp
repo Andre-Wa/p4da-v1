@@ -17,6 +17,7 @@
  */
 
 #include "usb_hid_keyboard.h"
+#include "usb_host_state.h"
 
 #include "esp_log.h"
 #include "usb/usb_host.h"
@@ -36,6 +37,7 @@ static UsbKbdEventCallback s_event_cb = nullptr;
 
 static TaskHandle_t s_lib_task = NULL;
 static volatile bool s_installed = false;
+static volatile bool s_host_ready = false;  /* v5.12.0: usb_host_install() OK (usb_host_state.h) */
 static volatile bool s_shutdown = false;      /* pede saída da lib task */
 static SemaphoreHandle_t s_lib_done_sem = NULL; /* lib task avisou que saiu */
 
@@ -276,6 +278,7 @@ static void usb_host_lib_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
+    s_host_ready = true;   /* v5.12.0: 2º client (UAC) espera por isto */
     xTaskNotifyGive((TaskHandle_t)arg);
 
     /* NÃO sair em ALL_FREE por conta própria: barramento vazio é o
@@ -335,6 +338,7 @@ void usb_hid_keyboard_prepare_sleep(void)
 {
     if (!s_installed) return;
     ESP_LOGI(TAG, "teardown USB p/ standby...");
+    s_host_ready = false;   /* host vai sumir; UAC não deve assumir o contrário */
     for (int i = 0; i < USB_KBD_MAX_IFACES; i++) {
         if (s_devs[i]) {
             hid_host_device_close(s_devs[i]);
@@ -370,3 +374,8 @@ void usb_hid_keyboard_resume(void)
     start_stack();
     ESP_LOGI(TAG, "USB apos wake: instalado=%d", (int)s_installed);
 }
+
+/* v5.12.0: ver usb_host_state.h — audio_uac espera por isto antes do
+ * 1º uac_host_install() (elimina o E "Unable to register USB Host client"
+ * que aparecia em todo boot por corrida de inicialização). */
+bool usb_host_state_ready(void) { return s_host_ready; }
