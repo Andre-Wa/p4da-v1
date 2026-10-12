@@ -22,3 +22,12 @@ gcc -std=gnu11 -Wall -Wextra -Wno-unused-parameter \
 
 echo "--- rodando /tmp/cfgtest_bin ---"
 /tmp/cfgtest_bin
+
+# ---- BAT.2: máquina de estados de bateria (battery.c real, sem IDF) ----
+gcc -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
+    -DBATTERY_UNIT_TEST -I tools/hosttest/stubs -I main \
+    main/battery.c tools/hosttest/host_batt_test.c \
+    -o /tmp/batt_bin
+
+echo "--- rodando /tmp/batt_bin ---"
+/tmp/batt_bin

@@ -673,6 +673,13 @@ toda a interface".
 - [x] Bring-up I2S + ES8311 + NS4150 (PA_EN): beep de UI primeiro (prova
       do caminho) — **M5c.1 FEITO/validado em HW 2026-10-11 (v5.11.4)**:
       beep 440 Hz audível sem ruído, touch vivo depois, UAC independente.
+- [x] **M5c.1b (v5.13.0, 2026-10-12)**: beep serializado por mutex —
+      clique duplo no "teste de som" não empilha mais duas senoides no
+      mesmo canal (log "Adev_Codec: Input already open" + som
+      dobrado/distorcido); 2º clique na janela do 1º é descartado.
+      Volume default do codec 40→60 e ganho do beep 20000→26000
+      (`BOARD_SPK_VOL_DEFAULT`/`BOARD_BEEP_GAIN`): falante de telefone
+      antigo relatado baixo em campo.
 - [ ] Seletor de saída em Config → Tela/Sistema: UAC | interno | auto
   (UAC se presente); mix de decisão documentado em USB.md/HARDWARE.md.
 - [ ] Conector de bateria: validação de carga/descarga com áudio tocando
@@ -693,8 +700,26 @@ toda a interface".
       beep (espelho de estado do canal em audio_i2s.c) e o `E uac-host:
       Unable to register USB Host client` do boot (audio_uac espera
       `usb_host_state_ready()` antes do 1º install).
+- [x] **VALIDADO EM HARDWARE 2026-10-12** (log do usuário, v5.12.0): % na
+      status bar vivo; repouso estável (4077-4080 mV/89% por ~10 min,
+      inclusive em STANDBY); carga coerente (4170-4174 mV/97%); beep,
+      touch e UAC inalterados. Bateria de campo: 14500 Li-ion.
+- [x] **BAT.2 (v5.13.0, 2026-10-12)**: máquina de estados bateria/
+      carregando/assentando em `main/battery.c` (detecção por salto de
+      tensão; % congelado pós-unplug até assentar — mata a sanfona
+      97→94→97); estado no log e no Config→Sistema; teste de host
+      `tools/hosttest/host_batt_test.c`; fix cosmético de print
+      (adc_unit_t é 0-based: log da v5.12.0 dizia "ADC1_CH4", o canal
+      certo sempre foi ADC2_CH4/GPIO53). Docs: POWER.md §BAT.2.
 - [ ] **BAT.1**: calibração da curva/fator do divisor contra multímetro +
       autonomia por degrau na bateria (docs/POWER.md §BAT.1).
+
+### KB-ALT — teclado USB sem VBUS na bateria (futuro, estudo em USB.md)
+- [ ] USB-A host NÃO tem VBUS na bateria (USB5V_IN = só entrada externa,
+      folhas 02/03; HARDWARE.md achado 10). Opções p/ o RP2040-Zero do
+      teclado: A) VBUS externo via JP1 pin 2 (VCC5V, vivo na bateria) —
+      imediata, sem firmware; B) escravo I²C em JP1 23/24; C) ponte UART.
+      Estudo e trade-offs: docs/USB.md §"Teclado RP2040-Zero sem VBUS".
 
 ### M5d — Integrações (cola com M6)
 - [ ] Alarme/agenda (M6) tocando via sink local; wake por alarme com

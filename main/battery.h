@@ -29,10 +29,18 @@ extern "C" {
  *
  * Notas de uso:
  *  - Durante a CARGA a leitura reflete a tensão de carga (lê alto, ~4.2 V
- *    no topo) — é esperado, não é bug.
- *  - A curva %-vs-mV é uma LiPo típica SEM carga; sob carga pesada (tela +
- *    falante) a tensão cai por resistência interna e o % lê pessimista.
- *    Calibrar depois contra multímetro (docs/POWER.md, BAT.1).
+ *    no topo) — é esperado, não é bug. Desde a v5.13.0 (BAT.2) uma máquina
+ *    de estados detecta o carregador por salto de tensão e, ao desconectar,
+ *    CONGELA o % ("assentando") até a tensão de carga dissipar — mata o
+ *    efeito sanfona ao tirar/recolocar o carregador. Detalhes e limiares:
+ *    docs/POWER.md §BAT.2.
+ *  - A curva %-vs-mV é uma LiPo/Li-ion típica SEM carga (tabela s_curve em
+ *    battery.c); vale p/ qualquer célula 4.2 V (14500, 18650, LiPo): o que
+ *    muda entre elas é a CAPACIDADE (autonomia), não a curva de tensão.
+ *    Químicas diferentes (LiFePO4, 4.35 V) exigem editar a s_curve.
+ *  - Sob carga pesada (tela + falante) a tensão cai por resistência
+ *    interna e o % lê pessimista. Calibrar depois contra multímetro
+ *    (docs/POWER.md, BAT.1).
  *  - O divisor consome ~25 uA permanentes (4.2 V / 168 K) — irrelevante
  *    perto do consumo de tela/C6.
  */
@@ -54,6 +62,9 @@ int battery_node_mv(void);
 
 /** true se a calibração eFuse (line fitting) foi aplicada. */
 bool battery_calibrated(void);
+
+/** BAT.2: "bateria" | "carregando" | "assentando" (string estática). */
+const char *battery_state_str(void);
 
 /** Curto p/ status bar: "87%" | "--". Thread-safe (cópia). */
 void battery_status_str(char *buf, int sz);

@@ -19,6 +19,8 @@
 #include "esp_codec_dev_defaults.h"
 #include "es8311_codec.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #include <math.h>
 #include <string.h>
@@ -28,6 +30,12 @@ static const char *TAG = "audio_i2s";
 static i2s_chan_handle_t s_tx = NULL;
 static esp_codec_dev_handle_t s_dev = NULL;
 static bool s_ready = false;
+/* v5.13.0: serializa beeps. O botão "teste de som" da UI spawna uma task
+ * por clique; dois cliques rápidos empilhavam duas senoides no MESMO
+ * canal I2S (log: "Adev_Codec: Input already open" + som dobrado/
+ * distorcido). Com o mutex, o 2º clique dentro da janela do 1º é DESCARTADO
+ * (try-take de 50 ms), não enfileirado — teste de som é idempotente. */
+static SemaphoreHandle_t s_beep_mtx = NULL;
 /* Espelho do estado enable/disable do canal I2S TX. NÓS habilitamos antes
  * de cada esp_codec_dev_open() e o componente desabilita no close(); sem
  * este espelho o disable INTERNO do set_fmt() (audio_codec_data_i2s.c:
@@ -115,10 +123,12 @@ esp_err_t audio_i2s_init(void)
     s_dev = esp_codec_dev_new(&dev_cfg);
     if (!s_dev) { ESP_LOGE(TAG, "esp_codec_dev_new falhou"); return ESP_FAIL; }
 
-    esp_codec_dev_set_out_vol(s_dev, 40);   /* conservador p/ 1ª prova */
+    esp_codec_dev_set_out_vol(s_dev, BOARD_SPK_VOL_DEFAULT);
+    s_beep_mtx = xSemaphoreCreateMutex();
+    if (!s_beep_mtx) { ESP_LOGE(TAG, "sem RAM p/ mutex do beep"); return ESP_ERR_NO_MEM; }
     s_ready = true;
-    ESP_LOGI(TAG, "ES8311 + NS4150 prontos (I2S0, I2C condiv., PA=GPIO%d)",
-             (int)BOARD_AMP_PA_EN_GPIO);
+    ESP_LOGI(TAG, "ES8311 + NS4150 prontos (I2S0, I2C condiv., PA=GPIO%d, vol=%d)",
+             (int)BOARD_AMP_PA_EN_GPIO, BOARD_SPK_VOL_DEFAULT);
     return ESP_OK;
 }
 
@@ -132,6 +142,14 @@ void audio_i2s_set_vol(int pct)
 esp_err_t audio_i2s_beep(int ms)
 {
     if (!s_ready) return ESP_ERR_INVALID_STATE;
+    /* v5.13.0: clique duplo não empilha mais duas senoides (ruído alto e
+     * distorcido até o fim do teste). Janela de 50 ms: cliques nessa
+     * janela são o caso patológico (spawn de task quase simultâneo);
+     * descartamos em vez de enfileirar p/ o som não "atrasar". */
+    if (xSemaphoreTake(s_beep_mtx, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGW(TAG, "beep descartado: outro beep em andamento (clique duplo?)");
+        return ESP_ERR_INVALID_STATE;
+    }
     esp_codec_dev_sample_info_t fs = {
         .sample_rate = BEEP_RATE,
         .channel = 2,
@@ -142,6 +160,7 @@ esp_err_t audio_i2s_beep(int ms)
     }
     if (esp_codec_dev_open(s_dev, &fs) != ESP_OK) {
         ESP_LOGE(TAG, "codec open falhou");
+        xSemaphoreGive(s_beep_mtx);
         return ESP_FAIL;
     }
     s_chan_on = true;   /* open religa o canal após o reconfig interno */
@@ -152,10 +171,10 @@ esp_err_t audio_i2s_beep(int ms)
         int n = total - pos < 256 ? total - pos : 256;
         for (int i = 0; i < n; i++) {
             /* envelope simples p/ não clicar: 5 ms de rampa nas pontas */
-            int g = 20000;
-            if (pos + i < BEEP_RATE / 200) g = (pos + i) * 20000 / (BEEP_RATE / 200);
+            int g = BOARD_BEEP_GAIN;
+            if (pos + i < BEEP_RATE / 200) g = (pos + i) * BOARD_BEEP_GAIN / (BEEP_RATE / 200);
             int rem = total - (pos + i);
-            if (rem < BEEP_RATE / 200) g = rem * 20000 / (BEEP_RATE / 200);
+            if (rem < BEEP_RATE / 200) g = rem * BOARD_BEEP_GAIN / (BEEP_RATE / 200);
             int16_t v = (int16_t)(sinf(2.0f * (float)M_PI * 440.0f *
                                        (float)(pos + i) / (float)BEEP_RATE) * (float)g);
             buf[i * 2] = v;
@@ -166,6 +185,7 @@ esp_err_t audio_i2s_beep(int ms)
     }
     esp_codec_dev_close(s_dev);   /* desabilita o canal internamente */
     s_chan_on = false;
+    xSemaphoreGive(s_beep_mtx);
     ESP_LOGI(TAG, "beep 440 Hz %d ms no falante", ms);
     return ESP_OK;
 }

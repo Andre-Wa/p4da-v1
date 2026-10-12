@@ -112,6 +112,27 @@ Onde protótipo e placa real divergiam, **a placa real prevalece** (marcado [FIX
    luaconf.h` público que define `LUA_32BITS` para todos os consumidores —
    quando o registro publicar versão com esse port, o nosso define vira
    redundância inofensiva (idempotente).
+10. **USB-A host NÃO tem VBUS na bateria — é projeto, não defeito**
+    (achado de 2026-10-12, folhas 02+03). O VBUS das duas portas USB-A
+    ("Full Speed USB" USB1 e "High speed USB" USB3) é a rede
+    **USB5V_IN**, que só existe vinda da entrada externa: VIN (MX1.25 4P)
+    → Q4 (AO3401, chave P-MOS) → USB5V_IN. O boost do IP5306
+    (**VOUT-BAT**, que alimenta o buck 3V3, o backlight e o NS4150) NÃO
+    toca o USB5V_IN em lugar nenhum do esquemático. Consequências:
+    - Na bateria, periféricos USB (teclado, dongle, headset com fio via
+      hub) ficam SEM energia → "USB não funciona na bateria" relatado em
+      campo é esperado; com carregador/PC ligado, funciona.
+    - O header de expansão JP1 pin 2 = **VCC5V** (= VOUT-BAT com fusível
+      de 1 A) VIVE na bateria: é a fonte certa p/ alimentar periférico
+      externo sem mexer no firmware (ver docs/USB.md §"Teclado RP2040-Zero
+      sem VBUS no USB-A").
+    - O falante funciona na bateria porque o NS4150 é alimentado por
+      VOUT-BAT (folha 02, bloco SPEAKER: pin 7 VCC ← VOUT-BAT) — provado
+      em campo na v5.11.4/v5.12.0 sem USB plugado.
+    - Cuidado p/ futuras ideias: alimentar algo pesado do VCC5V na
+      bateria esbarra no auto-desligue do IP5306 por carga leve
+      (docs/POWER.md fontes [9]-[11]) — o sistema inteiro já passa do
+      limiar, mas um periférico que puxe picos pode oscilar o rail.
 
 ## Bateria / conector CN4 (polaridade!)
 
@@ -137,7 +158,10 @@ line-fitting quando o chip tiver; sem eFuse, fallback linear ~3.1 V FS @
 Comportamentos esperados (não são bugs):
 - **Em carga** a leitura reflete a tensão de carga (lê alto, ~4.2 V no
   topo): o divisor está do lado da bateria, e o IP5306 eleva a bateria
-  durante CC/CV.
+  durante CC/CV. Desde a v5.13.0 (BAT.2) uma máquina de estados detecta
+  carga/saída por salto de tensão e CONGELA o % no pós-carga até a tensão
+  assentar — estados "bateria|carregando|assentando" no log e no
+  Config→Sistema; detalhes e limiares em docs/POWER.md §BAT.2.
 - **Sob carga pesada** (tela + falante + Wi-Fi) a tensão cede pela
   resistência interna da célula: o % lê pessimista e recupera em repouso.
 - O divisor consome ~25 µA permanentes (4.2 V / 168 K) — irrelevante.

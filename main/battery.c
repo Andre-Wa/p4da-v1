@@ -1,5 +1,6 @@
 /**
- * battery.c — BAT.0 (v5.12.0): leitura de bateria via divisor da folha 03.
+ * battery.c — BAT.0 (v5.12.0) + BAT.2 (v5.13.0): bateria via divisor da
+ * folha 03, com máquina de estados de carga/assentamento.
  *
  * Topologia (esquemático GUITION JC4880P443C_I_W, folha 03 "Expand IO"):
  *   BAT+ --R52 68K--+--R57 100K--GND   (C61 10nF no nó)
@@ -11,13 +12,26 @@
  *    fallback linear documentado (FS ~3.1 V @ 12 dB, 12 bits) — o padrão
  *    do exemplo oficial examples/peripherals/adc/oneshot_read do IDF.
  *  - 8 amostras por poll (2 descartadas p/ settling), média, ×(68+100)/100
- *    = tensão da bateria, EMA 1/4 entre polls p/ não piscar na UI.
+ *    = tensão da bateria, EMA entre polls p/ não piscar na UI.
  *  - Task própria ("battery", 4 s): NUNCA tocar I2C/ADC no caminho da UI.
  *    A UI só lê os caches volatile.
+ *  - BAT.2 (v5.13.0): máquina de estados BATERIA/CARREGANDO/ASSENTANDO.
+ *    Sem pino de status do IP5306 roteado ao P4, a carga é detectada por
+ *    SALTO de tensão (+40 mV num poll de 4 s é fisicamente impossível só
+ *    com química). Ao desconectar o carregador o % exibido CONGELA
+ *    ("assentando") até a tensão de carga dissipar (sag >= 90 mV do pico,
+ *    ou 10 min), então o % reassume pela curva — é o que mata o efeito
+ *    sanfona 97→94→97 relatado ao tirar/recolocar o carregador. Durante a
+ *    carga o % segue a tensão de terminal (lê alto: é a física do CC-CV,
+ *    ver docs/POWER.md §BAT.2).
  *
  * Por que task e não leitura sob demanda: a 1ª conversão oneshot após
  * acordar o ADC leva ~ms e o Slint roda em task de evento; manter o poll
  * aqui deixa a status bar sempre com valor fresco sem bloquear ninguém.
+ *
+ * Nota de exibição: adc_unit_t é enum 0-based (ADC_UNIT_2 == 1); todo log
+ * imprime unit+1. Na v5.12.0 o log dizia "ADC1_CH4" por imprimir o enum
+ * cru — o canal certo sempre foi ADC2_CH4 (GPIO53).
  */
 
 #include "battery.h"
@@ -45,9 +59,14 @@ static volatile int s_pct = -1;
 static volatile int s_batt_mv = -1;
 static volatile int s_node_mv = -1;
 static volatile int s_raw = -1;
-static int s_ema_mv = -1;          /* só a task battery escreve */
+static int s_ema_mv = -1;          /* só battery_ingest() escreve */
+static int s_prev_mv = -1;         /* só battery_ingest() escreve */
 static int s_polls = 0;            /* só a task battery escreve */
 static int s_bad = 0;              /* leituras inválidas seguidas */
+static int s_state = 0;            /* BSTAT_*; só battery_ingest() escreve */
+static int s_pre_chg_mv = -1;      /* ema ao entrar em carga (p/ sag) */
+static int s_settle_peak = -1;     /* pico de ema na sessão de carga */
+static int s_settle_polls = 0;     /* polls em ASSENTANDO */
 static TaskHandle_t s_task = NULL;
 
 #define BATT_SAMPLES     8
@@ -57,6 +76,18 @@ static TaskHandle_t s_task = NULL;
 #define BATT_FS_RAW      4095      /* 12 bits (ADC_BITWIDTH_DEFAULT no P4) */
 #define BATT_MV_MIN      2000      /* abaixo disso: divisor/leitura ruim */
 #define BATT_MV_MAX      4500      /* acima: impossível p/ 1 célula LiPo */
+
+/* BAT.2: limiares da máquina de estados (por poll de 4 s). Uma LiPo em
+ * repouso/carga muda < ~5 mV/poll; +40 mV/poll só com carregador CC-CV. */
+#define BATT_RISE_MV       40      /* salto p/ detectar "carregador ligou" */
+#define BATT_DROP_MV       25      /* queda p/ detectar "carregador saiu" */
+#define BATT_SETTLE_POLLS  150     /* 10 min máx. segurando o % */
+#define BATT_SETTLE_SAG_MV 90      /* sag do pico que encerra o assentamento */
+
+/* Estados (s_state). Exposos p/ UI/log como texto via battery_state_str(). */
+#define BSTAT_BATTERY   0   /* na bateria: % segue a curva */
+#define BSTAT_CHARGING  1   /* salto detectado: % segue a tensão de carga */
+#define BSTAT_SETTLING  2   /* carregador saiu: % congelado até assentar */
 
 /* Curva LiPo típica SEM carga (mV -> %), piecewise-linear, descendente.
  * Aproximação de 1ª rodada; calibrar contra multímetro em BAT.1
@@ -79,6 +110,90 @@ static int curve_pct(int mv)
         }
     }
     return 0;
+}
+
+/* ---- BAT.2: máquina de estados carga/assentamento ----
+ * Entra com a tensão JA compensada pelo divisor (mV de bateria).
+ * Única dona de s_ema_mv/s_pct/s_state. Em host test (BATTERY_UNIT_TEST)
+ * é não-static p/ o harness injetar perfis de tensão direto. */
+#ifdef BATTERY_UNIT_TEST
+#define BATT_VIS /* visível p/ tools/hosttest/host_batt_test.c */
+#else
+#define BATT_VIS static
+#endif
+
+BATT_VIS void battery_ingest(int bmv)
+{
+    const int delta = (s_prev_mv < 0) ? 0 : bmv - s_prev_mv;
+    s_prev_mv = bmv;
+
+    if (s_ema_mv < 0) {           /* 1ª leitura válida: ancora tudo */
+        s_ema_mv = bmv;
+        s_pct = curve_pct(bmv);
+        s_state = BSTAT_BATTERY;
+        return;
+    }
+
+    switch (s_state) {
+    case BSTAT_CHARGING:
+        if (delta <= -BATT_DROP_MV) {
+            s_state = BSTAT_SETTLING;
+            s_settle_polls = 0;
+            s_settle_peak = s_ema_mv;
+            ESP_LOGI(TAG, "carregador saiu: segurando %d%% enquanto a "
+                     "tensão de carga assenta (%d mV)", s_pct, s_ema_mv);
+            s_ema_mv = (s_ema_mv * 7 + bmv) / 8;   /* lenta p/ não vazar p/ % */
+            break;
+        }
+        s_ema_mv = (s_ema_mv + bmv) / 2;           /* segue a carga rápido */
+        if (s_ema_mv > s_settle_peak) s_settle_peak = s_ema_mv;
+        s_pct = curve_pct(s_ema_mv);
+        break;
+
+    case BSTAT_SETTLING:
+        /* Reconexão só se a tensão VOLTA ao nível de carga (pico - 30 mV):
+         * um rebound pós-unplug (+40..60 mV de dissipação parcial) não é
+         * carregador de volta — era o que confundia a v5.13.0-rc. */
+        if (delta >= BATT_RISE_MV && bmv >= s_settle_peak - 30) {
+            s_state = BSTAT_CHARGING;
+            ESP_LOGI(TAG, "carregador de volta: pct segue a tensão de carga");
+            s_ema_mv = (s_ema_mv + bmv) / 2;
+            s_pct = curve_pct(s_ema_mv);
+            break;
+        }
+        s_ema_mv = (s_ema_mv * 7 + bmv) / 8;       /* lenta: só diagnóstico */
+        s_settle_polls++;
+        if (s_settle_polls >= BATT_SETTLE_POLLS ||
+            s_ema_mv <= s_settle_peak - BATT_SETTLE_SAG_MV ||
+            (s_pre_chg_mv > 0 && s_ema_mv <= s_pre_chg_mv + 15)) {
+            s_state = BSTAT_BATTERY;
+            s_pct = curve_pct(s_ema_mv);           /* snap honesto p/ curva */
+            ESP_LOGI(TAG, "tensão assentada: %d%% (%d mV) após %d polls",
+                     s_pct, s_ema_mv, s_settle_polls);
+        }
+        break;
+
+    default: /* BSTAT_BATTERY */
+        if (delta >= BATT_RISE_MV) {
+            s_state = BSTAT_CHARGING;
+            s_pre_chg_mv = s_ema_mv;
+            s_settle_peak = bmv;
+            ESP_LOGI(TAG, "salto de +%d mV num poll: carregador presente "
+                     "(pct segue a tensão de carga)", delta);
+        }
+        s_ema_mv = (s_ema_mv * 3 + bmv) / 4;
+        s_pct = curve_pct(s_ema_mv);
+        break;
+    }
+}
+
+const char *battery_state_str(void)
+{
+    switch (s_state) {
+    case BSTAT_CHARGING: return "carregando";
+    case BSTAT_SETTLING: return "assentando";
+    default:             return "bateria";
+    }
 }
 
 /* ---- calibração: MESMO padrão do exemplo oficial do IDF 5.5.1 ----
@@ -156,18 +271,18 @@ static void battery_task(void *arg)
                                 / BOARD_BATT_DIV_R_BOT_K;
             if (bmv >= BATT_MV_MIN && bmv <= BATT_MV_MAX) {
                 s_bad = 0;
-                s_ema_mv = (s_ema_mv < 0) ? bmv : (s_ema_mv * 3 + bmv) / 4;
+                const bool first = !s_ready;
+                battery_ingest(bmv);
                 s_node_mv = nmv;
                 s_batt_mv = s_ema_mv;
-                s_pct = curve_pct(s_ema_mv);
-                if (!s_ready) {
+                if (first) {
                     s_ready = true;
                     ESP_LOGI(TAG, "bateria: %d%% | %d mV | nó %d mV | raw %d | %s",
                              s_pct, s_ema_mv, nmv, s_raw,
                              s_calibrated ? "calibrado (eFuse)" : "fallback linear");
                 } else if (++s_polls % BATT_LOG_EVERY == 0) {
-                    ESP_LOGI(TAG, "bateria: %d%% | %d mV | nó %d mV | raw %d",
-                             s_pct, s_ema_mv, nmv, s_raw);
+                    ESP_LOGI(TAG, "bateria: %d%% | %d mV | nó %d mV | raw %d | %s",
+                             s_pct, s_ema_mv, nmv, s_raw, battery_state_str());
                 }
             } else if (++s_bad == 3) {
                 ESP_LOGW(TAG, "leituras fora da faixa (%d mV no nó) — divisor/ADC?",
@@ -210,7 +325,7 @@ esp_err_t battery_start(void)
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG, "sentido de bateria: GPIO%d = ADC%d_CH%d, divisor %dK/%dK",
-             (int)BOARD_BATT_SENSE_GPIO, (int)BOARD_BATT_ADC_UNIT,
+             (int)BOARD_BATT_SENSE_GPIO, (int)BOARD_BATT_ADC_UNIT + 1,
              (int)BOARD_BATT_ADC_CHANNEL, BOARD_BATT_DIV_R_TOP_K,
              BOARD_BATT_DIV_R_BOT_K);
     return ESP_OK;
@@ -234,12 +349,16 @@ void battery_describe(char *buf, int sz)
     if (!buf || sz <= 0) return;
     if (!s_ready) {
         snprintf(buf, sz, "lendo (ADC%d_CH%d/GPIO%d)...",
-                 (int)BOARD_BATT_ADC_UNIT, (int)BOARD_BATT_ADC_CHANNEL,
+                 (int)BOARD_BATT_ADC_UNIT + 1, (int)BOARD_BATT_ADC_CHANNEL,
                  (int)BOARD_BATT_SENSE_GPIO);
         return;
     }
-    snprintf(buf, sz, "%d%% (%d mV, ADC%d_CH%d/GPIO%d, %s)",
-             s_pct, s_batt_mv, (int)BOARD_BATT_ADC_UNIT,
+    /* adc_unit_t é 0-based: imprime unit+1 (v5.12.0 dizia "ADC1" por bug
+     * de exibição; o canal certo sempre foi ADC2_CH4/GPIO53). */
+    snprintf(buf, sz, "%d%% (%d mV, ADC%d_CH%d/GPIO%d, %s%s%s)",
+             s_pct, s_batt_mv, (int)BOARD_BATT_ADC_UNIT + 1,
              (int)BOARD_BATT_ADC_CHANNEL, (int)BOARD_BATT_SENSE_GPIO,
-             s_calibrated ? "cal. eFuse" : "fallback linear");
+             s_calibrated ? "cal. eFuse" : "fallback linear",
+             s_state == BSTAT_BATTERY ? "" : ", ",
+             s_state == BSTAT_BATTERY ? "" : battery_state_str());
 }

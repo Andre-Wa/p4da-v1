@@ -117,6 +117,14 @@
 #define BOARD_I2S_DIN_GPIO     GPIO_NUM_48   /* codec -> P4 (mic/line) */
 #define BOARD_AMP_PA_EN_GPIO   GPIO_NUM_11   /* NS4150 enable */
 
+/* v5.13.0 (relato de campo: falante de telefone antigo, som baixo):
+ * volume default do codec (0-100, mapa esp_codec_dev; era 40 fixo na
+ * prova M5c.1) e ganho de pico da senoide do beep (FS = 32767; era
+ * 20000). Subir além disso pede medição: o NS4150 é alimentado por
+ * VOUT-BAT (boost do IP5306) e clippa se o DAC saturar. */
+#define BOARD_SPK_VOL_DEFAULT  60
+#define BOARD_BEEP_GAIN        26000
+
 /* ---------------------------------------------------------------------
  * Botões / LED / UART                                        [NEW]
  * --------------------------------------------------------------------- */

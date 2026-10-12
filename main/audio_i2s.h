@@ -15,7 +15,9 @@ extern "C" {
 esp_err_t audio_i2s_init(void);
 bool audio_i2s_ready(void);
 
-/** Senoide 440 Hz, estéreo, ~1,2 s, volume conservador (prova de caminho). */
+/** Senoide 440 Hz, estéreo, ~1,2 s, volume BOARD_SPK_VOL_DEFAULT.
+ * Serializado por mutex (v5.13.0): um 2º beep dentro da janela do 1º
+ * retorna ESP_ERR_INVALID_STATE sem tocar (clique duplo não empilha). */
 esp_err_t audio_i2s_beep(int ms);
 
 /** Volume do codec 0–100 (mapa default do esp_codec_dev). */

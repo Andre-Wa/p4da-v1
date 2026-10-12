@@ -145,13 +145,49 @@ Não são regressões do M4.13: são limites conhecidos do modo robusto
 4. Se HIBERNATE ficar > ~1 mA, investigar rails sempre-vivos (TLV62569, IP5306
    quiescente) — aí é limite de placa, não de firmware.
 
-## Bateria: nível em % (BAT.0, v5.12.0) e calibração (BAT.1)
+## Bateria: nível em % (BAT.0), estabilidade em carga (BAT.2) e calibração (BAT.1)
 
 Desde a v5.12.0 a status bar mostra % real: divisor da folha 03
 (BAT+ → R52 68K → nó → R57 100K → GND; nó → R55 0R → GPIO53 = ADC2_CH4),
 lido por `main/battery.c` (topologia e caveats em docs/HARDWARE.md §
 "Nível de bateria: divisor no GPIO53"). O log periódico
-`battery: NN% | mV | nó mV | raw` é a matéria-prima da calibração.
+`battery: NN% | mV | nó mV | raw | estado` é a matéria-prima da
+calibração. **BAT.0 validado em hardware 2026-10-12** (log do usuário,
+v5.12.0): % na status bar, leitura periódica estável em repouso
+(4077-4080 mV / 89% por ~10 min), comportamento em carga coerente
+(4170-4174 mV / 97%) e assentamento pós-carga visível (4135 mV / 94%).
+
+### BAT.2 — por que o % "pula" ao mexer no carregador (v5.13.0)
+
+Sem pino de status do IP5306 roteado ao P4, o firmware NÃO sabe por
+hardware se há carregador; ele INFERE por tensão, e isso explica tudo o
+que se vê em campo:
+
+| evento físico | tensão no divisor | o que a UI mostra |
+|---|---|---|
+| repouso na bateria | OCV real (ex.: 4079 mV) | % pela curva (89%) |
+| carregador ligado (CC/CV) | tensão de TERMINAL, até ~4.2 V | % alto (97%) — é a física, não é bug |
+| carregador removido | queda rápida p/ OCV + sag | % **congelado** ("assentando") |
+| tensão assentada (sag ≥ 90 mV do pico, ou 10 min) | OCV de novo | % reassume pela curva (94%) |
+
+Máquina de estados em `main/battery.c` (`BSTAT_BATTERY/CHARGING/
+SETTLING`, v5.13.0): salto de +40 mV num poll de 4 s = carregador ligou
+(impossível só com química); queda de −25 mV estando em carga =
+carregador saiu → congela o % até assentar (mata o efeito sanfona
+97→94→97 de tirar/recolocar); em "assentando", só volta a "carregando"
+se a tensão retornar ao pico−30 mV (rebound pós-unplug não conta).
+Teste de host: `tools/hosttest/host_batt_test.c` (perfis do log real).
+O estado aparece no log periódico e no Config→Sistema
+(`battery_describe`): "bateria" | "carregando" | "assentando".
+
+Limites honestos: nos primeiros minutos APÓS conectar o carregador o %
+sobe rápido (terminal em CV) e é otimista; "100%" confiável só em
+repouso pós-carga. Trocar de bateria da MESMA química (Li-ion/LiPo
+4.2 V — 14500, 18650, pouch) NÃO exige ajuste: a curva é %-vs-TENSÃO, e
+capacidade (mAh) só muda autonomia, não a curva. Atenção: células 14500
+reais têm ~0.6-0.9 Ah apesar de rótulos "3000 mAh" — a autonomia virá
+menor que o rótulo. Químicas OUTRAS (LiFePO4 3.6 V máx, Li-ion 4.35 V)
+exigem editar `s_curve` em main/battery.c (e o teto BATT_MV_MAX).
 
 **BAT.1 — calibrar e validar (com bateria de verdade, sem USB):**
 1. Multímetro na bateria + `battery:` no log, em repouso, a cada ~10%:

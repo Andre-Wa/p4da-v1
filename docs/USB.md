@@ -203,3 +203,60 @@ plugar device SEM classe de áudio (ex.: teclado) — é o driver dizendo
   fone com player parado) retoma o ponto salvo de unplug/erro.
 - Volume 0% → `set_mute(true)` (curva do H3S: mín. audível, 0–10%
   indistinguíveis = característica do device); >0% → unmute.
+
+## USB-A na bateria: VBUS ausente (achado de 2026-10-12)
+
+Relato de campo (v5.12.0): "o USB não funciona ao ligar apenas com a
+bateria". Confirmado no esquemático (folhas 02+03, ver docs/HARDWARE.md
+achado 10): o VBUS das portas USB-A é a rede **USB5V_IN**, que só existe
+a partir da entrada externa (VIN MX1.25 4P → Q4 AO3401 → USB5V_IN). O
+boost do IP5306 (VOUT-BAT) não alimenta o VBUS. Ou seja: na bateria as
+portas host estão SEM energia por projeto; os dados (D+/D−) continuam
+chegando ao P4, só falta VBUS no periférico. Com carregador/PC plugado,
+tudo funciona (teclado + UAC validados assim).
+
+Implicações práticas:
+- Periférico USB na bateria exige VBUS externo (opção A abaixo).
+- O hub M5a.3, quando implementado, herda a mesma limitação.
+- Nada disso afeta o falante (NS4150 em VOUT-BAT) nem o divisor de
+  bateria (BAT+): ambos vivem do boost, não do USB5V_IN.
+
+### Teclado RP2040-Zero sem VBUS no USB-A — três caminhos (KB-ALT, futuro)
+
+Contexto: o teclado do usuário é uma matriz USB hosteada por um
+RP2040-Zero. Para usar o PDA longe do carregador:
+
+**A — VBUS externo pelo header JP1 (sem mexer no firmware, recomendado
+p/ experimentar já).** JP1 pin 2 = VCC5V (VOUT-BAT, fusível 1 A) e pin 1
+= VCC3V3, ambos VIVOS na bateria. Alimentar o RP2040 (e/ou o VBUS do
+teclado) por fora, mantendo D+/D− no USB-A: o P4 enumera normal, pois o
+periférico tem energia própria. Risco: nenhum no firmware; só conferir
+consumo total do VCC5V (o boost do IP5306 desliga com carga MUITO leve,
+fontes [9]-[11] do POWER.md — o sistema já passa do limiar, mas picos do
+periférico podem oscilar o rail).
+
+**B — RP2040 como escravo I²C no header (estudo p/ firmware futuro).**
+JP1 pins 23/24 = S3_I2C_SDA/SCL (mesma rede do CN3). O RP2040 hosta o
+teclado com TinyUSB e expõe os eventos como escravo I²C (endereço a
+combinar, fora de 0x5D/0x14 GT911 e 0x30 ES8311; p.ex. 0x18): mapa de
+registros com FIFO de eventos (report HID cru ou teclas já
+decodificadas) + pino de INT opcional p/ acordar o P4. No P4, um driver
+novo (esp_driver i2c_master já em uso) traduziria p/ o mesmo caminho de
+eventos de tecla do `usb_hid_keyboard.cpp`. Em aberto antes de
+implementar: (i) quais GPIOs do P4 caem em JP1 23/24 (confirmar no
+esquemático/GPIO matrix — o nome "S3_I2C" é da prancheta, não implica
+controlador dedicado); (ii) se esse barramento é o I2C0 compartilhado
+(touch/codec) ou outro controlador — se for o 0, arbitragem de bus
+handle via `board_i2c_bus()`; (iii) clock: 100-400 kHz basta p/ teclado
+(poucos bytes/evento).
+
+**C — ponte serial (UART) pelo header.** JP1 traz GPIO43/44 (e o MX1.25
+traz UART0 do console). RP2040 envia frames (SOF + report + CRC16) a
+115200-921600; no P4, task de linha lê e injeta no mesmo caminho de
+teclas. Mais simples e robusto que I²C escravo (sem preocupação de
+clock-stretching/timeout de slave), custa 2 GPIOs e um conector.
+
+Decisão adiada (KB-ALT no ROADMAP): A é imediata e reversível; B/C só se
+o uso de campo exigir cabo único. O protocolo de B/C deve nascer com
+handshake e CRC — o I²C do GT911 já mostrou que bus compartilhado sem
+disciplina vira caça-fantasma.
