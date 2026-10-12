@@ -142,7 +142,7 @@ export component SettingsScreen inherits Rectangle {
             }
 
             if root.tab == 1: VerticalLayout {
-                GhostButton { width: 160px; text: "Teste som (falante)"; clicked => { root.test-speaker(); } }
+                GhostButton { text: "Teste som (falante)"; clicked => { root.test-speaker(); } }
                 spacing: Theme.sp-md;
                 GridLayout {
                     spacing: Theme.sp-sm;
@@ -178,18 +178,18 @@ export component SettingsScreen inherits Rectangle {
                     Text { text: "Cursor do editor:"; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
                     // Rótulos em palavra (M4.8): "■" não existe na Roboto
                     // Mono (default da UI) — nada de glifo fora do charset.
-                    GhostButton { width: 76px; fsize: Theme.type-label; text: "barra"; clicked => { root.set-cursor("bar"); } }
-                    GhostButton { width: 76px; fsize: Theme.type-label; text: "traço"; clicked => { root.set-cursor("under"); } }
-                    GhostButton { width: 76px; fsize: Theme.type-label; text: "bloco"; clicked => { root.set-cursor("block"); } }
+                    GhostButton { width: 80px; fsize: Theme.type-label; text: "barra"; clicked => { root.set-cursor("bar"); } }
+                    GhostButton { width: 80px; fsize: Theme.type-label; text: "traço"; clicked => { root.set-cursor("under"); } }
+                    GhostButton { width: 80px; fsize: Theme.type-label; text: "bloco"; clicked => { root.set-cursor("block"); } }
                 }
                 HorizontalLayout {
                     spacing: Theme.sp-sm;
                     Text { text: "Acento:"; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
-                    GhostButton { width: 76px; fsize: Theme.type-label; text: "ciano"; clicked => { root.set-accent("cyan"); } }
-                    GhostButton { width: 76px; fsize: Theme.type-label; text: "violeta"; clicked => { root.set-accent("violet"); } }
-                    GhostButton { width: 76px; fsize: Theme.type-label; text: "verde"; clicked => { root.set-accent("green"); } }
-                    GhostButton { width: 76px; fsize: Theme.type-label; text: "âmbar"; clicked => { root.set-accent("amber"); } }
-                    GhostButton { width: 76px; fsize: Theme.type-label; text: "rosa"; clicked => { root.set-accent("pink"); } }
+                    GhostButton { width: 80px; fsize: Theme.type-label; text: "ciano"; clicked => { root.set-accent("cyan"); } }
+                    GhostButton { width: 80px; fsize: Theme.type-label; text: "violeta"; clicked => { root.set-accent("violet"); } }
+                    GhostButton { width: 80px; fsize: Theme.type-label; text: "verde"; clicked => { root.set-accent("green"); } }
+                    GhostButton { width: 80px; fsize: Theme.type-label; text: "âmbar"; clicked => { root.set-accent("amber"); } }
+                    GhostButton { width: 80px; fsize: Theme.type-label; text: "rosa"; clicked => { root.set-accent("pink"); } }
                 }
             }
 
@@ -197,7 +197,7 @@ export component SettingsScreen inherits Rectangle {
                 spacing: Theme.sp-md;
                 Text { text: "Wi-Fi: " + root.wifi-info; color: Theme.on-surface; font-size: Theme.type-body; }
                 SwitchRow { label: "Wi-Fi ligado (radio)"; value <=> root.wifi-on; }
-                TonalButton { width: 180px; text: "Abrir tela de redes"; clicked => { root.open-networks(); } }
+                TonalButton { text: "Abrir tela de redes"; clicked => { root.open-networks(); } }
                 Text {
                     text: "Credenciais em config/wifi.lua (SSID, senha, auto_connect).";
                     font-size: Theme.type-tiny;
