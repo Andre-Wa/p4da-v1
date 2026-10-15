@@ -1,12 +1,23 @@
-/* host_batt_test.c — teste de host da máquina de estados BAT.2
- * (main/battery.c compilado com -DBATTERY_UNIT_TEST).
+/* host_batt_test.c — teste de host da máquina de estados BAT.2 + âncoras
+ * BAT.1a + estabilidade BAT.1c (main/battery.c compilado com
+ * -DBATTERY_UNIT_TEST).
  *
  * Injeta perfis de tensão de bateria (mV já compensados do divisor) em
  * battery_ingest() e verifica: % estável na bateria, detecção de carga
- * por salto, CONGELAMENTO do % ao desconectar ("assentando"), retorno
- * ao carregar de novo e snap honesto p/ curva quando a tensão assenta.
- * Cenários espelham o log de campo de 2026-10-12 (v5.12.0): 4079 mV na
- * bateria, 4170-4174 mV em carga, 4135 mV assentando no standby.
+ * por salto COM CONFIRMAÇÃO (BAT.1c), congelamento do % ao desconectar
+ * ("assentando"), retorno ao carregar de novo, snap honesto p/ curva,
+ * rejeição de transiente de carga (sag+recuperação não vira "carregando"),
+ * passo do % (queda/suave ritmada + banda morta) e religação imediata do
+ * % no reset de calibração.
+ * Cenários espelham os logs de campo (v5.12 2026-10-12: 4079 mV bateria,
+ * 4170-4174 mV carga; v5.14 14ª rodada: sag 2815 mV, dança ±50 mV com
+ * brilho/Wi-Fi, âncoras aprendidas 2815-4200).
+ *
+ * NOTA BAT.1c: o % exibido anda a PASSO (queda ≤1 pt/3 polls, subida ≤1
+ * pt/6 polls com banda morta de 2). Perfis sintéticos que pulam centenas
+ * de mV de uma vez exigem MUITOS polls p/ o passo alcançar a curva — os
+ * loops abaixo são dimensionados p/ isso; na descarga real a tensão cai
+ * ~100x mais devagar que o passo e ele nunca é o limitante.
  */
 #include <stdio.h>
 #include <string.h>
@@ -19,6 +30,7 @@ void battery_ingest(int bmv);        /* não-static sob BATTERY_UNIT_TEST */
 void battery_learn(int bmv);         /* BAT.1a: idem */
 void battery_calib_load(void);       /* BAT.1a: idem */
 int curve_pct(int mv);               /* BAT.1a: idem */
+int battery_slow_mv(void);           /* BAT.1c: EMA lenta (só host) */
 
 /* ---- stub NVS mínimo (RAM) p/ battery.c no host ----
  * Só as chaves i32 "vmin"/"vmax" importam; o resto é no-op. O binário de
@@ -45,7 +57,7 @@ esp_err_t nvs_get_i32(nvs_handle_t h, const char *k, int32_t *v)
 esp_err_t nvs_set_u8(nvs_handle_t h, const char *k, uint8_t v)
 { (void)h; (void)k; (void)v; return ESP_OK; }
 esp_err_t nvs_get_u8(nvs_handle_t h, const char *k, uint8_t *v)
-{ (void)h; (void)k; (void)v; return ESP_ERR_NVS_NOT_FOUND; }
+{ (void)h; (void)k; (void)v; *v = 0; return ESP_ERR_NVS_NOT_FOUND; }
 esp_err_t nvs_set_str(nvs_handle_t h, const char *k, const char *v)
 { (void)h; (void)k; (void)v; return ESP_OK; }
 esp_err_t nvs_get_str(nvs_handle_t h, const char *k, char *v, size_t *len)
@@ -71,10 +83,18 @@ int main(void)
     CHECK(strcmp(battery_state_str(), "bateria") == 0,
           "A: estado = %s (esperado bateria)", battery_state_str());
 
-    /* B — conectou carregador: salto +90 mV num poll -> carregando */
+    /* B — conectou carregador: salto +90 mV -> CANDIDATO (BAT.1c: um poll
+     * só não confirma mais; alívio de carga de brilho/beep recuperava
+     * 50-150 mV num poll e fantasiava de carregador). 2º poll sustentado
+     * E acima da EMA lenta +40 -> confirmou. */
     battery_ingest(4172);
+    CHECK(strcmp(battery_state_str(), "bateria") == 0,
+          "B: estado no candidato = %s (esperado bateria até confirmar)",
+          battery_state_str());
+    battery_ingest(4174);
     CHECK(strcmp(battery_state_str(), "carregando") == 0,
-          "B: estado pós-salto = %s (esperado carregando)", battery_state_str());
+          "B: estado pós-confirmação = %s (esperado carregando)",
+          battery_state_str());
     for (int i = 0; i < 5; i++) battery_ingest(4174);
     CHECK(battery_percent() >= 95,
           "B: pct em carga = %d (esperado >= 95)", battery_percent());
@@ -89,7 +109,9 @@ int main(void)
           "C: pct não congelado no assentamento: %d != %d",
           battery_percent(), held);
 
-    /* D — recolocou o carregador no meio do assentamento */
+    /* D — recolocou o carregador no meio do assentamento (reentrada imediata:
+     * nível voltou ao pico-30; a confirmação de 2 polls é só p/ entrada
+     * vindo de BATERIA, onde o transiente de carga acontece) */
     battery_ingest(4174);
     CHECK(strcmp(battery_state_str(), "carregando") == 0,
           "D: estado no replug = %s (esperado carregando)", battery_state_str());
@@ -125,7 +147,7 @@ int main(void)
           "G: curva(3750) = %d (esperado 45, meio de 3800->53 / 3700->38)",
           curve_pct(3750));
 
-    /* K1 — gate de pct: longe do vazio (89%) NÃO aprende vmin, mesmo com
+    /* K1 — gate de pct: longe do vazio (~88%) NÃO aprende vmin, mesmo com
      * leitura baixa (sag transitório de falante/tela não envenena âncora) */
     battery_learn(3000);
     CHECK(battery_anchor_min() == 3300,
@@ -133,8 +155,10 @@ int main(void)
           battery_anchor_min());
 
     /* H — perto do vazio aprende vmin (simétrico: célula que corta em
-     * 3.45 V SOBE a âncora; senão o PDA "morre aos 15%") */
-    for (int i = 0; i < 12; i++) battery_ingest(3500);   /* ema -> ~3518 */
+     * 3.45 V SOBE a âncora; senão o PDA "morre aos 15%"). BAT.1c: o % anda
+     * a passo (1 pt/3 polls) — 200 polls p/ o passo levar o pct de ~88 ao
+     * gate de aprendizado (<= 30) com a EMA lenta já colada em 3500. */
+    for (int i = 0; i < 200; i++) battery_ingest(3500);
     CHECK(battery_percent() >= 0 && battery_percent() <= 30,
           "H: pct = %d (esperado <= 30 p/ aprender vmin)", battery_percent());
     battery_learn(3450);
@@ -162,8 +186,12 @@ int main(void)
           battery_anchor_min());
 
     /* I — em carga aprende vmax (só acima do atual+15: meia-carga não
-     * move; topo CC-CV sim) */
-    battery_ingest(4260);                                /* salto -> carregando */
+     * move; topo CC-CV sim). BAT.1c: salto +760 vira candidato e só o
+     * 2º poll confirma. */
+    battery_ingest(4260);
+    CHECK(strcmp(battery_state_str(), "bateria") == 0,
+          "I: estado no candidato = %s (esperado bateria)", battery_state_str());
+    battery_ingest(4262);
     CHECK(strcmp(battery_state_str(), "carregando") == 0,
           "I: estado = %s (esperado carregando)", battery_state_str());
     battery_learn(4260);
@@ -202,8 +230,9 @@ int main(void)
           battery_anchor_min(), battery_anchor_max());
 
     /* K5 — vão mínimo entre âncoras (600 mV): candidato a vmin que deixa
-     * o intervalo estreito demais é rejeitado; um válido passa */
-    for (int i = 0; i < 14; i++) battery_ingest(3500);   /* -> bateria, ~14% */
+     * o intervalo estreito demais é rejeitado; um válido passa.
+     * (Vindo de carga: unplug -> assentando -> snap -> passo p/ descer.) */
+    for (int i = 0; i < 150; i++) battery_ingest(3500);
     CHECK(strcmp(battery_state_str(), "bateria") == 0 && battery_percent() <= 30,
           "K5: pré-condição (estado=%s pct=%d)", battery_state_str(),
           battery_percent());
@@ -216,7 +245,124 @@ int main(void)
           "K5: vmin = %d após learn(3250) (esperado 3250)",
           battery_anchor_min());
 
+    /* ============ BAT.1c (v5.15.0): estabilidade sob carga ==============
+     * Estado aqui: bateria, ~3500 mV, âncoras 3250-4200 (K5). */
+
+    /* L — transiente rejeitado: sag profundo de 1 poll (tudo ligado:
+     * brilho+Wi-Fi+falante; campo real: 2815 mV) seguido de recuperação.
+     * A RECUPERAÇÃO (+600 mV!) é candidato a carregador, mas não confirma:
+     * voltou AO nível da EMA lenta, não ACIMA dela +40. O % anda no máx.
+     * 2 pts nos 6 polls (o passo limita; a curva nem se moveu de verdade). */
+    {
+        const int p0 = battery_percent();
+        battery_ingest(2900);                       /* sag de 1 poll */
+        battery_ingest(3500);                       /* recuperação: candidato */
+        CHECK(strcmp(battery_state_str(), "bateria") == 0,
+              "L: candidato pós-sag = %s (esperado bateria)",
+              battery_state_str());
+        battery_ingest(3500);                       /* confirma? NÃO */
+        CHECK(strcmp(battery_state_str(), "bateria") == 0,
+              "L: estado pós-recuperação = %s (esperado bateria, não "
+              "carregando)", battery_state_str());
+        for (int i = 0; i < 3; i++) battery_ingest(3500);
+        const int p1 = battery_percent();
+        CHECK(p1 <= p0 && p0 - p1 <= 2,
+              "L: pct moveu %d pts sob sag+recuperação (esperado <= 2; %d->%d)",
+              p0 - p1, p0, p1);
+        CHECK(strcmp(battery_state_str(), "bateria") == 0,
+              "L: estado final = %s (esperado bateria)", battery_state_str());
+    }
+
+    /* M — queda ritmada: degrau sustentado 3500->3300 (curva cai ~14 pts);
+     * o % exibido desce no máx. 1 pt a cada 3 polls, sem subir nunca. */
+    {
+        int prev = battery_percent();
+        for (int i = 0; i < 30; i++) {
+            battery_ingest(3300);
+            const int p = battery_percent();
+            if (p < prev) CHECK(prev - p == 1,
+                  "M: queda de %d pts num poll (%d -> %d)", prev - p, prev, p);
+            CHECK(p <= prev, "M: pct subiu durante queda (%d -> %d)", prev, p);
+            prev = p;
+        }
+        CHECK(battery_percent() <= 5 && battery_percent() >= 1,
+              "M: pct final = %d (esperado ~2-4, passo acompanhou a curva "
+              "sem ultrapassá-la)", battery_percent());
+        CHECK(strcmp(battery_state_str(), "bateria") == 0,
+              "M: estado = %s (esperado bateria)", battery_state_str());
+    }
+
+    /* M2 — subida ritmada com banda morta: rampa suave (+3 mV/poll, abaixo
+     * do limiar de candidato) até ~3390; o % sobe no máx. 1 pt a cada 6
+     * polls e PARA a 2 pts da curva (nunca cola por completo). Os primeiros
+     * polls ainda terminam a descida do passo de M (pct -> curva) — a
+     * monotonia é cobrada após estabilizar. */
+    {
+        int prev = battery_percent();
+        for (int i = 0; i < 30; i++) battery_ingest(3300 + 3 * i);
+        for (int i = 0; i < 60; i++) {
+            battery_ingest(3390);
+            const int p = battery_percent();
+            if (i >= 9) {   /* pós-estabilização: só sobe (1 pt por vez) */
+                CHECK(p >= prev,
+                      "M2: pct caiu durante subida (%d -> %d no poll %d)",
+                      prev, p, i);
+                if (p > prev) CHECK(p - prev == 1, "M2: subida de %d pts",
+                                    p - prev);
+            }
+            prev = p;
+        }
+        CHECK(battery_percent() >= 3 && battery_percent() <= 6,
+              "M2: pct final = %d (esperado 3-6: subiu ritmado e parou na "
+              "banda morta)", battery_percent());
+    }
+
+    /* N — dança de carga ±15 mV (Wi-Fi/brilho): perfil oscilante 40 polls;
+     * o % NÃO se move (curva estável + banda morta) — é exatamente a
+     * queixa da 14ª rodada ("porcentagem variando muito durante o uso"). */
+    {
+        const int p0 = battery_percent();
+        int mn = p0, mx = p0;
+        for (int i = 0; i < 40; i++) {
+            battery_ingest(i % 2 ? 3405 : 3375);
+            const int p = battery_percent();
+            if (p < mn) mn = p;
+            if (p > mx) mx = p;
+        }
+        CHECK(mx - mn <= 1,
+              "N: pct oscilou %d pts sob dança de ±15 mV (esperado <= 1)",
+              mx - mn);
+        CHECK(strcmp(battery_state_str(), "bateria") == 0,
+              "N: estado = %s (esperado bateria)", battery_state_str());
+    }
+
+    /* O — "Zerar calibração" religa o % NA HORA (flag consumida no próximo
+     * poll), em vez do passo caminhar até a curva nova. Perfil: rampa suave
+     * até 3606 mV (o % sobe ritmado com âncoras 3250-4200), reset, 1 poll:
+     * pct == curve_pct(lenta) com âncoras de fábrica. */
+    {
+        for (int i = 1; i <= 67; i++) battery_ingest(3405 + 3 * i);  /* ->3606 */
+        for (int i = 0; i < 60; i++) battery_ingest(3606);
+        CHECK(strcmp(battery_state_str(), "bateria") == 0,
+              "O: rampa virou %s (esperado bateria)", battery_state_str());
+        const int before = battery_percent();
+        battery_reset_calibration();
+        battery_ingest(3606);                    /* consome a flag s_recal */
+        const int expect = curve_pct(battery_slow_mv());
+        CHECK(battery_percent() == expect,
+              "O: pct pós-reset = %d (esperado %d = curva nova na EMA lenta; "
+              "antes era %d)", battery_percent(), expect, before);
+        CHECK(battery_percent() <= before,
+              "O: religação inflou o pct (%d > %d)", battery_percent(), before);
+        CHECK(battery_anchor_min() == 3300 && battery_anchor_max() == 4200,
+              "O: âncoras pós-reset = %d-%d", battery_anchor_min(),
+              battery_anchor_max());
+        for (int i = 0; i < 12; i++) battery_ingest(3606);
+        CHECK(battery_percent() == expect,
+              "O: pct instável pós-reset: %d != %d", battery_percent(), expect);
+    }
+
     if (fails) { printf("BATT TEST: %d FALHA(S)\n", fails); return 1; }
-    printf("BATT TEST: OK (BAT.2 estados + BAT.1a âncoras)\n");
+    printf("BATT TEST: OK (BAT.2 estados + BAT.1a âncoras + BAT.1c estabilidade)\n");
     return 0;
 }

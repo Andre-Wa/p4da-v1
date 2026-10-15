@@ -47,8 +47,19 @@ static int s_last_good = 0;   /* última conectada (ponto de partida) */
  * rotacionar; scan dirige a escolha; espera sem martelo se nenhuma
  * salva estiver presente; chave de rádio on/off pela UI. */
 #define TRY_BUDGET 3
+/* v5.15.0: espera ociosa NÃO é mais permanente. 14ª rodada: o AP caiu por
+ * instantes (reason 15 x2, NO_AP_FOUND, sumiu do scan) e o manager dormiu
+ * "até ação manual" — quando o AP voltou, o PDA seguiu offline até o
+ * usuário re-salvar a rede. Agora: re-scan a cada WIFI_IDLE_RESCAN_S e, a
+ * cada WIFI_IDLE_RELAX ciclos (~10 min), as marcas de falha (bad/noap)
+ * são limpas p/ nova rodada (comportamento tipo Android). Custo: um scan
+ * de ~0.3 s a cada 2 min SÓ enquanto desconectado e fora do standby
+ * (s_paused pausa tudo). */
+#define WIFI_IDLE_RESCAN_S 120
+#define WIFI_IDLE_RELAX    5
 static uint8_t s_auth_hits[MAX_SAVED];
 static int s_attempts = 0;
+static int s_idle = 0;         /* ciclos seguidos sem rede salva no scan */
 static bool s_enabled = true;
 static bool s_sntp_on = false;
 static char s_ssid[33] = { 0 };
@@ -141,6 +152,55 @@ static void copy_wifi_str(char *dst, size_t cap, const char *src)
     dst[l] = 0;
 }
 
+/* v5.15.0: fonte ÚNICA do wifi_config_t STA. Até a 5.14 o caminho manual
+ * (wifi_net_connect) montava a config com pmf_cfg.capable=true e os
+ * caminhos automáticos (wifi_task/apply_saved) com memset 0 — deriva que
+ * fazia rede WPA3/PMF conectar "na mão" e não no auto-reconexão. No IDF
+ * 5.5 `capable` é deprecado (o device negocia PMF sempre que o AP
+ * anuncia — esp_wifi_types_generic.h), mas config idêntica em todos os
+ * caminhos é a regra; o C6 slave pode ter semântica própria. */
+static void build_sta_cfg(wifi_config_t *cfg, const char *ssid, const char *pass)
+{
+    memset(cfg, 0, sizeof(*cfg));
+    copy_wifi_str((char *)cfg->sta.ssid, sizeof(cfg->sta.ssid), ssid);
+    copy_wifi_str((char *)cfg->sta.password, sizeof(cfg->sta.password), pass);
+    cfg->sta.threshold.authmode = WIFI_AUTH_OPEN;  /* aceita WPA2/WPA3 do AP */
+    cfg->sta.pmf_cfg.capable = true;   /* hotspots WPA3/PMF (ex.: Android) */
+    cfg->sta.pmf_cfg.required = false;
+}
+
+/* v5.15.0: reason de desconexão em texto (nomes do enum em
+ * esp_wifi_types_generic.h, IDF 5.5.1 — conferidos contra o header).
+ * Lição da 14ª rodada: o log chamava reason 15 de "AUTH_FAIL" e mandava
+ * o diagnóstico p/ "senha errada" quando era 4WAY_HANDSHAKE_TIMEOUT
+ * (troca EAPOL não completada — AP instável/ocupado OU senha errada). */
+static const char *wifi_reason_str(int r)
+{
+    switch (r) {
+    case WIFI_REASON_UNSPECIFIED:                return "UNSPECIFIED";
+    case WIFI_REASON_AUTH_EXPIRE:                return "AUTH_EXPIRE";
+    case WIFI_REASON_AUTH_LEAVE:                 return "AUTH_LEAVE";
+    case WIFI_REASON_DISASSOC_DUE_TO_INACTIVITY: return "DISASSOC_INACTIVITY";
+    case WIFI_REASON_ASSOC_TOOMANY:              return "ASSOC_TOOMANY";
+    case WIFI_REASON_ASSOC_LEAVE:                return "ASSOC_LEAVE";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:     return "4WAY_HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_GROUP_KEY_UPDATE_TIMEOUT:   return "GROUP_KEY_UPDATE_TIMEOUT";
+    case WIFI_REASON_IE_IN_4WAY_DIFFERS:         return "IE_IN_4WAY_DIFFERS";
+    case WIFI_REASON_802_1X_AUTH_FAILED:         return "802_1X_AUTH_FAILED";
+    case WIFI_REASON_BEACON_TIMEOUT:             return "BEACON_TIMEOUT";
+    case WIFI_REASON_NO_AP_FOUND:                return "NO_AP_FOUND";
+    case WIFI_REASON_AUTH_FAIL:                  return "AUTH_FAIL";
+    case WIFI_REASON_ASSOC_FAIL:                 return "ASSOC_FAIL";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:          return "HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_CONNECTION_FAIL:            return "CONNECTION_FAIL";
+    case WIFI_REASON_AP_TSF_RESET:               return "AP_TSF_RESET";
+    case WIFI_REASON_ROAMING:                    return "ROAMING";
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+                                                 return "NO_AP_W_COMPAT_SECURITY";
+    default:                                     return NULL;
+    }
+}
+
 /* ---------------- eventos ---------------- */
 extern void wifi_net_on_event_ui(bool connected, int rssi);  /* main.cpp */
 
@@ -199,30 +259,43 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         }
         /* M5.2: reason dirige a rotação entre redes salvas: auth =
          * senha errada NESSA rede (marca bad); NO_AP_FOUND = AP fora
-         * (marca noap). Com uma rede só, comporta como antes. */
+         * (marca noap). Com uma rede só, comporta como antes.
+         * v5.15.0: TODA desconexão loga o reason pelo NOME (antes só o
+         * ramo auth logava, e rotulava reason 15 — 4WAY_HANDSHAKE_TIMEOUT,
+         * troca EAPOL não completada — de "AUTH_FAIL"; NO_AP_FOUND saía em
+         * silêncio e o salto "tentativa 4/3" do log da 14ª rodada era
+         * indecifrável). Reason 15/204 = senha errada OU AP instável. */
         const wifi_event_sta_disconnected_t *disc =
             (const wifi_event_sta_disconnected_t *)data;
         const int r = disc ? (int)disc->reason : 0;
+        const char *rn = wifi_reason_str(r);
+        ESP_LOGW(TAG, "desconexão: %s (reason %d)", rn ? rn : "DESCONHECIDO", r);
         const bool auth = (r == WIFI_REASON_AUTH_FAIL ||
                            r == WIFI_REASON_HANDSHAKE_TIMEOUT ||
-                           r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT);
+                           r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+                           r == WIFI_REASON_IE_IN_4WAY_DIFFERS ||
+                           r == WIFI_REASON_802_1X_AUTH_FAILED);
         if (s_cur >= 0 && auth) {
-            /* M5.3: AUTH_FAIL espúrio acontece (rede boa!); só marca a
-             * rede após TRY_BUDGET falhas de auth na mesma rede. */
+            /* M5.3: falha de auth/handshake espúria acontece (AP ocupado
+             * ou instável também dá reason 15/204!); só marca a rede após
+             * TRY_BUDGET falhas na mesma rede. */
             s_auth_hits[s_cur]++;
-            s_attempts++;          /* rótulo "tentativa n/3" coerente */
+            s_attempts++;          /* orçamento do ciclo (backoff/rotação) */
             if (s_auth_hits[s_cur] >= TRY_BUDGET) {
                 s_nets[s_cur].bad = 1;
-                ESP_LOGW(TAG, "AUTH_FAIL x%d em \"%s\": senha errada? "
+                ESP_LOGW(TAG, "%s x%d em \"%s\": senha errada ou AP hostil? "
                               "rede marcada p/ este ciclo",
-                         (int)s_auth_hits[s_cur], s_nets[s_cur].ssid);
+                         rn ? rn : "falha de auth", (int)s_auth_hits[s_cur],
+                         s_nets[s_cur].ssid);
             } else {
-                ESP_LOGW(TAG, "AUTH_FAIL (reason %d) em \"%s\": "
-                              "tentativa %d/%d na mesma rede",
-                         r, s_nets[s_cur].ssid,
-                         (int)s_auth_hits[s_cur], TRY_BUDGET);
+                ESP_LOGW(TAG, "falha de auth/handshake em \"%s\": %d/%d na "
+                              "mesma rede (senha errada OU AP instável)",
+                         s_nets[s_cur].ssid, (int)s_auth_hits[s_cur],
+                         TRY_BUDGET);
             }
         } else if (s_cur >= 0 && r == WIFI_REASON_NO_AP_FOUND) {
+            ESP_LOGW(TAG, "AP \"%s\" ausente no momento — rotacionando via scan",
+                     s_nets[s_cur].ssid);
             s_nets[s_cur].noap = 1;      /* some do scan: roda já */
             s_attempts = TRY_BUDGET;
         } else {
@@ -243,6 +316,7 @@ static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data
         s_connected = true;
         s_backoff_s = 0;      /* M5.0b: conectou zera backoff */
         s_attempts = 0;       /* M5.3: e o orçamento de tentativas */
+        s_idle = 0;           /* v5.15.0: e os ciclos de espera ociosa */
         if (s_cur >= 0) {     /* M5.2: rede atual volta a ser confiável */
             s_nets[s_cur].bad = 0;
             s_nets[s_cur].noap = 0;
@@ -262,10 +336,7 @@ static void apply_saved(int i)
     snprintf(s_ssid, sizeof(s_ssid), "%s", s_nets[i].ssid);
     snprintf(s_pass, sizeof(s_pass), "%s", s_nets[i].pass);
     wifi_config_t cfg;
-    memset(&cfg, 0, sizeof(cfg));
-    copy_wifi_str((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), s_nets[i].ssid);
-    copy_wifi_str((char *)cfg.sta.password, sizeof(cfg.sta.password), s_nets[i].pass);
-    cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    build_sta_cfg(&cfg, s_nets[i].ssid, s_nets[i].pass);   /* v5.15.0: fonte única */
     esp_wifi_set_config(WIFI_IF_STA, &cfg);
     ESP_LOGI(TAG, "rede salva %d/%d: \"%s\"", i + 1, s_nets_n, s_nets[i].ssid);
 }
@@ -320,17 +391,55 @@ static void recon_task(void *arg)
                 continue;
             }
             if (idx < 0) {
-                ESP_LOGW(TAG, "nenhuma rede salva presente — Wi-Fi em "
-                              "espera até ação manual (Redes/chave/rescan)");
+                /* v5.15.0: nenhuma rede SALVA apareceu no scan (a mensagem
+                 * da 5.14, "nenhuma rede salva presente", lia-se como "não
+                 * há redes salvas" — havia 2!). Espera com re-scan
+                 * periódico; ação manual (Redes/rescan/chave) acorda na
+                 * hora via notify. */
+                s_idle++;
+                if (s_idle % WIFI_IDLE_RELAX == 0) {
+                    for (int k = 0; k < s_nets_n; k++) {
+                        s_nets[k].bad = 0; s_nets[k].noap = 0;
+                        s_auth_hits[k] = 0;
+                    }
+                    s_attempts = 0;
+                    ESP_LOGI(TAG, "reavaliação periódica: marcas de falha "
+                                  "limpas, redes salvas voltam a concorrer");
+                }
+                ESP_LOGW(TAG, "nenhuma das %d rede(s) salva(s) presente no "
+                              "scan — nova varredura em %d s (manual: "
+                              "Redes/chave/rescan)", s_nets_n,
+                         WIFI_IDLE_RESCAN_S);
+                bool early = false;
+                for (int t = 0; t < WIFI_IDLE_RESCAN_S * 2; t++)
+                    if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(500))) {
+                        early = true; break;   /* ação manual: reavalia já */
+                    }
+                if (!early) xTaskNotifyGive(s_recon_task);
                 continue;
             }
         }
+        s_idle = 0;
         s_backoff_s = (idx == s_cur && s_attempts)
             ? (s_backoff_s ? (s_backoff_s * 2 > 30 ? 30 : s_backoff_s * 2) : 2)
             : 2;
-        ESP_LOGI(TAG, "reconexão em %d s — rede \"%s\" (tentativa %d/%d%s)",
-                 s_backoff_s, s_nets[idx].ssid, s_attempts + 1, TRY_BUDGET,
-                 stay ? "" : ", escolhida por scan");
+        /* v5.15.0: o "(tentativa 7/3)" da 5.14 misturava contador global
+         * do ciclo com orçamento POR rede — sem sentido. Agora o sufixo
+         * diz o que importa: quantas falhas de auth na rede, ou o RSSI
+         * que o scan viu. */
+        char why[72];
+        if (stay) {
+            if (s_auth_hits[idx])
+                snprintf(why, sizeof(why), "auth/handshake %d/%d na rede",
+                         (int)s_auth_hits[idx], TRY_BUDGET);
+            else
+                snprintf(why, sizeof(why), "insistindo na mesma rede");
+        } else {
+            snprintf(why, sizeof(why), "escolhida por scan, RSSI %d dBm",
+                     rssi);
+        }
+        ESP_LOGI(TAG, "reconexão em %d s — rede \"%s\" (%s)",
+                 s_backoff_s, s_nets[idx].ssid, why);
         vTaskDelay(pdMS_TO_TICKS((uint32_t)s_backoff_s * 1000U));
         if (!s_enabled || s_paused || s_connected) continue;
         if (idx != s_cur) { apply_saved(idx); s_attempts = 0; }
@@ -362,10 +471,7 @@ static void wifi_task(void *arg)
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_ip_event, NULL);
 
     wifi_config_t cfg;
-    memset(&cfg, 0, sizeof(cfg));
-    copy_wifi_str((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), s_ssid);
-    copy_wifi_str((char *)cfg.sta.password, sizeof(cfg.sta.password), s_pass);
-    cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    build_sta_cfg(&cfg, s_ssid, s_pass);   /* v5.15.0: fonte única */
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(WIFI_IF_STA, &cfg);
     if (!s_enabled) {   /* M5.3: chave OFF = rádio não sobe no boot */
@@ -602,12 +708,9 @@ esp_err_t wifi_net_connect(const char *ssid, const char *pass, bool save)
     if (idx >= 0) apply_saved(idx);
 
     wifi_config_t cfg;
-    memset(&cfg, 0, sizeof(cfg));
-    copy_wifi_str((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), ssid);
-    copy_wifi_str((char *)cfg.sta.password, sizeof(cfg.sta.password), pass);
-    cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;  /* aceita WPA2/WPA3 do AP */
-    cfg.sta.pmf_cfg.capable = true;   /* hotspots WPA3/PMF (ex.: alguns Android) */
-    cfg.sta.pmf_cfg.required = false;
+    build_sta_cfg(&cfg, ssid, pass);   /* v5.15.0: fonte única (era aqui que
+                                        * o PMF existia; auto-reconexão não
+                                        * tinha — deriva eliminada) */
     esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
     if (err != ESP_OK) return err;
     esp_wifi_disconnect();

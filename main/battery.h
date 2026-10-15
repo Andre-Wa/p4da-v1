@@ -40,9 +40,14 @@ extern "C" {
  *    Químicas diferentes (LiFePO4, 4.35 V) exigem editar a s_curve.
  *    BAT.1a (v5.14.0): os EXTREMOS da curva se ajustam sozinhos à célula
  *    (âncoras vmin/vmax aprendidas e persistidas no NVS) — ver battery.c.
- *  - Sob carga pesada (tela + falante) a tensão cai por resistência
- *    interna e o % lê pessimista. Refino da FORMA da curva contra
- *    multímetro segue em BAT.1b (docs/POWER.md, §BAT.1).
+ *  - Sob carga pesada (tela + falante + Wi-Fi) a tensão de terminal SAG
+ *    pela resistência interna (campo 14ª rodada: ±50 mV de dança, mínimo
+ *    2815 mV com tudo ligado). BAT.1c (v5.15.0): o % na bateria deriva de
+ *    uma EMA lenta (τ≈64 s) e anda a PASSO (queda ≤1 pt/12 s; subida só
+ *    fora de banda morta de 2 pts, ≤1 pt/24 s) — o número da UI não dança
+ *    mais com brilho/Wi-Fi. O sag continua visível no log serial (mV
+ *    rápido vs. lento). Refino da FORMA da curva contra multímetro segue
+ *    em BAT.1b (docs/POWER.md, §BAT.1).
  *  - O divisor consome ~25 uA permanentes (4.2 V / 168 K) — irrelevante
  *    perto do consumo de tela/C6.
  */
@@ -75,7 +80,9 @@ void battery_status_str(char *buf, int sz);
 
 /** Longo p/ Config→Sistema: "87% (4012 mV, ânc 3300-4200 mV,
  *  ADC2_CH4/GPIO53, cal. eFuse[, estado])". Atualizado ao vivo a cada 4 s
- *  (v5.14.0) — teste de bateria sem serial se faz por esta linha. */
+ *  (v5.14.0) — teste de bateria sem serial se faz por esta linha.
+ *  BAT.1c: o mV mostrado é o filtro do qual o % deriva (EMA lenta na
+ *  bateria/assentando, rápida em carga) — par %-mV sempre coerente. */
 void battery_describe(char *buf, int sz);
 
 /** BAT.1a (v5.14.0): âncoras mín/máx do remapeamento da curva (mV).

@@ -145,7 +145,7 @@ Não são regressões do M4.13: são limites conhecidos do modo robusto
 4. Se HIBERNATE ficar > ~1 mA, investigar rails sempre-vivos (TLV62569, IP5306
    quiescente) — aí é limite de placa, não de firmware.
 
-## Bateria: nível em % (BAT.0), estabilidade em carga (BAT.2) e calibração (BAT.1)
+## Bateria: nível em % (BAT.0), estabilidade em carga (BAT.2), calibração (BAT.1) e % sob carga (BAT.1c)
 
 Desde a v5.12.0 a status bar mostra % real: divisor da folha 03
 (BAT+ → R52 68K → nó → R57 100K → GND; nó → R55 0R → GPIO53 = ADC2_CH4),
@@ -238,6 +238,66 @@ bateria não há log):
 Teste de host: `tools/hosttest/host_batt_test.c` seções G–K (identidade
 com âncoras de fábrica, aprendizado simétrico de vmin, vmax em carga,
 guardas de pct/absoluto/histerese/vão, round-trip NVS + reset).
+
+### BAT.1c — estabilidade do % sob carga (v5.15.0, IMPLEMENTADO; validação HW pendente)
+
+Medição de campo da 14ª rodada (v5.14.0, célula 14500, âncoras NVS
+2815-4200 mV): descarga na bateria variou de **3950 mV (máx, ±50 mV)**
+até **2815 mV (mín, tudo ligado)**; no carregador, **4176 mV carregando
+e 4104 mV cheio**. Queixa: *"utilizar o brilho mais alto ou baixo, wifi,
+etc. influencia na voltagem lida, deixando a porcentagem variando muito
+durante o uso"*. É física, não bug de leitura: a tensão no divisor é a
+de TERMINAL (OCV − I·R_interno; R alto nesta 14500 genérica + corrente
+de entrada do boost do IP5306), então cada evento de carga elétrica
+move a leitura:
+
+| evento | ordem do sag/recuperação no divisor |
+|---|---|
+| brilho mínimo→máximo (backlight ST7701) | −50 a −200 mV (e volta ao dimerizar) |
+| rajada TX do Wi-Fi (C6 via SDIO) | pulsos de dezenas de mV entre polls |
+| beep/falante NS4150 (VOUT-BAT) | dezenas de mV durante o tom |
+| descarga profunda com tudo ligado | até 2815 mV (o mínimo aprendido) |
+
+Com a curva antiga (EMA α=1/4 e % = curva(EMA) direto), ±50 mV viravam
+±3-5 pts de % na tela, nos dois sentidos, a cada evento. Três respostas
+em `main/battery.c`:
+
+1. **EMA lenta** (α=1/16 por poll de 4 s, τ≈64 s) vira a fonte do % NA
+   BATERIA. A EMA rápida (α=1/4) segue dona da lógica de carga/
+   assentamento da BAT.2 — intocada. O log serial imprime as duas
+   (`bateria: NN% | mV | lenta mV | nó | raw | estado`), e a linha do
+   Config→Sistema mostra o filtro do qual o % deriva (par %-mV
+   coerente; a física do sag continua visível no serial).
+2. **Passo no % exibido** (`batt_pct_paced`): cai no máx. **1 pt a cada
+   3 polls (5%/min)** e só sobe se a curva passar do exibido em **>2
+   pts (banda morta)**, no máx. **1 pt a cada 6 polls**. Uma descarga
+   real (~0.5-1%/min) é muito mais lenta que o teto de queda — o passo
+   nunca esconde o fim da bateria; o que ele elimina é a dança.
+   Resultado de campo esperado: sob troca de brilho/Wi-Fi o % oscila
+   ≤±2 pts e devagar, em vez de ±5 pts instantâneos.
+3. **Salto de carregador com confirmação de 2 polls**: +40 mV num poll
+   só não basta mais — *alívio* de carga (dimerizar o backlight, fim de
+   beep) recupera 50-150 mV num poll e fantasiava de carregador
+   (sufixo "+" e % seguindo tensão alta). Agora: candidato no salto,
+   confirma no poll seguinte se o nível se SUSTENTOU (≥ candidato−15)
+   E está ACIMA da EMA lenta +40 mV (recuperação de sag volta AO nível
+   do filtro; carregador CC/CV levanta ACIMA dele). Custo: o "+"
+   aparece 4 s depois — irrelevante p/ evento de minutos. O "Zerar
+   calibração" também religa o % na hora (flag `s_recal` consumida pela
+   task no poll seguinte) em vez de esperar o passo caminhar.
+
+Trade-offs aceitos (documentados p/ não virarem "bug" depois): durante
+uma descarga REAL rápida o % exibido atrasa alguns minutos (o passo é
+o limitante só nesse caso extremo); após alívio de carga longo o % não
+sobe de volta além da banda morta (fica ≤2 pts abaixo da curva até a
+próxima carga); a âncora vmin=2815 aprendida é o sag SOB CARGA — para
+esta placa é justamente o limite real de operação (o corte acontece
+com a tensão já caída), então fica.
+
+Teste de host: `tools/hosttest/host_batt_test.c` seções L–O (sag de 1
+poll + recuperação NÃO vira carregador; queda ritmada 1 pt/3 polls;
+subida ritmada com banda morta; dança ±15 mV não move o %; reset
+religa o % na curva nova no 1º poll).
 
 ### BAT.1b — o que resta calibrar (com multímetro)
 

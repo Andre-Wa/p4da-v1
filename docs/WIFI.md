@@ -78,16 +78,71 @@ Fluxo (inspirado no Android, pedido do usuário na validação da v5.2):
 1. scan (bloqueante, na task `wifi_rcn`) → 2. lista de redes presentes →
 3. melhor rede SALVA presente (RSSI) → 3.1 até TRY_BUDGET=3 tentativas
 (backoff 2/4/8/16/30 s na mesma rede) → 4. conectou: fluxo normal
-(NTP etc.) → 5. erro contínuo ou AUTH_FAIL×3: marca a rede e volta ao
-passo 1 p/ a próxima salva presente → 6. nenhuma salva presente:
-`nenhuma rede salva presente — Wi-Fi em espera até ação manual`
-(sem martelo; acordam: toggle, connect manual, rescan da tela Redes,
-resume do standby — que também limpa as marcas do ciclo).
+(NTP etc.) → 5. erro contínuo ou falha de auth/handshake×3: marca a
+rede e volta ao passo 1 p/ a próxima salva presente → 6. nenhuma salva
+PRESENTE NO SCAN: `nenhuma das N rede(s) salva(s) presente no scan —
+nova varredura em 120 s` (v5.15.0: a espera NÃO é mais permanente —
+ver §Diagnóstico abaixo; a mensagem da v5.14, "nenhuma rede salva
+presente", lia-se como "não há redes salvas" quando havia 2). Acordam
+na hora: toggle, connect manual, rescan da tela Redes, resume do
+standby (que também limpa as marcas do ciclo).
 
-AUTH_FAIL espúrio (rede BOA que vacila) não rota mais na 1ª falha: são
-3 tentativas na mesma rede antes de marcar (`AUTH_FAIL (reason N) em
-"X": tentativa n/3`); o caso do log de 2026-10-05 (F3 correta marcada
-por um 202 isolado) não se repete.
+Falha de auth/handshake espúria (rede BOA que vacila) não rota mais na
+1ª falha: são 3 tentativas na mesma rede antes de marcar (`falha de
+auth/handshake em "X": n/3 na mesma rede`); o caso do log de
+2026-10-05 (F3 correta marcada por um 202 isolado) não se repete.
+
+## Diagnóstico de desconexões e recuperação de espera (v5.15.0)
+
+**Incidente da 14ª rodada** (log do usuário, v5.14.0): o Wi-Fi não
+conectou num boot em que sempre conectava, e "logo depois, no mesmo
+boot, conectou" após re-salvar a rede. A cadeia no log:
+
+| t (s) | evento | leitura correta |
+|---|---|---|
+| 9836 | conecta "Redstone" (escolhida por scan) | ok |
+| 12265 | desconexão SEM log nosso | `NO_AP_FOUND` (201) — inferido pelo salto do contador (o ramo era silencioso) |
+| 24997 / 62659 | "AUTH_FAIL (reason 15)" ×2 | reason 15 = `WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT` (EAPOL não completou): senha errada **OU AP instável/ocupado** — o rótulo AUTH_FAIL mandava o diagnóstico p/ senha |
+| 37946 | desconexão sem log | falha genérica (beacon/assoc) |
+| 97609→100129 | desconexão + scan vazio p/ salvas | AP **sumiu do ar** (não estava nos resultados do scan) |
+| 100129→224409 | "nenhuma rede salva presente" | espera PERMANENTE: o AP voltou minutos depois e o PDA seguiu offline até ação manual |
+| 224409 | usuário re-salva (wifi.lua 237 B) | flags limpas + connect imediato → conectado |
+
+Conclusão: AP instável por alguns minutos (handshakes perdidos +
+beacons perdidos + sumiço do scan) e um manager que, ao ficar ocioso,
+dormia para sempre. Nenhum dos dois é "senha errada".
+
+Mudanças (v5.15.0):
+1. **Toda** desconexão loga o reason pelo nome (`desconexão: NOME
+   (reason N)`, tabela `wifi_reason_str` conferida contra
+   `esp_wifi_types_generic.h` do IDF 5.5.1: 15=4WAY_HANDSHAKE_TIMEOUT,
+   200=BEACON_TIMEOUT, 201=NO_AP_FOUND, 202=AUTH_FAIL, 203=ASSOC_FAIL,
+   204=HANDSHAKE_TIMEOUT, 205=CONNECTION_FAIL, 210=NO_AP_W_COMPAT_…).
+   O ramo NO_AP_FOUND agora loga (`AP "X" ausente no momento —
+   rotacionando via scan`).
+2. **Espera ociosa com re-scan**: sem rede salva no scan, nova
+   varredura a cada `WIFI_IDLE_RESCAN_S`=120 s (loop de esperas de
+   500 ms, então notify de ação manual acorda em ≤0,5 s). A cada
+   `WIFI_IDLE_RELAX`=5 ciclos (~10 min) as marcas de falha
+   (bad/noap/auth_hits) são limpas p/ nova rodada — comportamento tipo
+   Android. Custo: ~0,3 s de scan a cada 2 min SÓ desconectado, com
+   auto-connect e fora do standby (`s_paused` pausa tudo).
+3. **Log de reconexão honesto**: acabou o `(tentativa 7/3)` que
+   misturava contador global do ciclo com orçamento POR rede. Agora:
+   `reconexão em N s — rede "X" (auth/handshake n/3 na rede |
+   insistindo na mesma rede | escolhida por scan, RSSI -NN dBm)`.
+4. **Config STA de fonte única** (`build_sta_cfg`): os três caminhos
+   (boot, apply_saved, connect manual) montavam `wifi_config_t`
+   separados; só o manual levava `pmf_cfg.capable=true`. No IDF 5.5 o
+   campo é deprecado (PMF é negociado sempre que o AP anuncia), mas
+   deriva entre caminhos é exatamente o tipo de bug que o incidente
+   parecia — eliminada.
+
+O mesmo incidente, na v5.15.0, logaria: `desconexão: NO_AP_FOUND
+(reason 201)` → `desconexão: 4WAY_HANDSHAKE_TIMEOUT (reason 15)` ×2 →
+`nenhuma das 2 rede(s) salva(s) presente no scan — nova varredura em
+120 s` → (AP volta) `reconexão em 2 s — rede "Redstone" (escolhida por
+scan, RSSI -NN dBm)` → conectado, sem toque do usuário.
 
 ## Chave de rádio (M5.3)
 

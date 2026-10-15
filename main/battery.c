@@ -36,6 +36,24 @@
  *    restaura os padrões. Procedimento de campo sem serial: usar até
  *    desligar + carregar até o fim; as âncoras aparecem na tela e no log.
  *    Detalhes: docs/POWER.md §BAT.1.
+ *  - BAT.1c (v5.15.0): ESTABILIDADE SOB CARGA. Medição de campo (14ª
+ *    rodada): brilho/Wi-Fi/falante movem a tensão de terminal ±50 mV ou
+ *    mais (célula 14500 com resistência interna alta + boost do IP5306);
+ *    o % dançava vários pontos durante o uso e um sag profundo chegou a
+ *    2815 mV com tudo ligado. Três respostas:
+ *      (1) EMA LENTA (α=1/16, τ≈64 s) é a fonte do % na bateria — a EMA
+ *          rápida (α=1/4) continua dona da lógica de carga/assentamento;
+ *      (2) PASSO no % exibido: cai no máx. 1 ponto a cada 3 polls e só
+ *          sobe se a curva superar o exibido em >2 pontos (banda morta),
+ *          1 a cada 6 polls — a física do sag continua visível no log,
+ *          mas o número da UI deriva devagar e dentro de uma banda;
+ *      (3) o salto "carregador entrou" exige CONFIRMAÇÃO no 2º poll
+ *          (nível sustentado E acima da EMA lenta +40 mV): alívio de
+ *          carga (dim do backlight, fim de beep) recupera 50-150 mV num
+ *          poll e antes fantasiava de carregador ("+" fantasma).
+ *    O "Zerar calibração" agora religa o % na hora (flag consumida no
+ *    poll seguinte) em vez de esperar o passo descer até a nova curva.
+ *    Detalhes e números de campo: docs/POWER.md §BAT.1c.
  *
  * Por que task e não leitura sob demanda: a 1ª conversão oneshot após
  * acordar o ADC leva ~ms e o Slint roda em task de evento; manter o poll
@@ -82,6 +100,12 @@ static volatile int s_node_mv = -1;
 static volatile int s_raw = -1;
 static int s_ema_mv = -1;          /* só battery_ingest() escreve */
 static int s_prev_mv = -1;         /* só battery_ingest() escreve */
+static int s_slow_mv = -1;         /* BAT.1c: EMA lenta — fonte do % na bateria */
+static int s_pct_step = 0;         /* BAT.1c: contador de polls p/ passo do % */
+static int s_rise_pend = -1;       /* BAT.1c: candidato a carregador (mV), -1 = nenhum */
+static int s_rise_slow = -1;       /* s_slow_mv no poll do candidato */
+static int s_rise_ema = -1;        /* s_ema_mv no poll do candidato (vira pre_chg) */
+static volatile bool s_recal = false;  /* BAT.1a/1c: botão zerar → religar % */
 static int s_polls = 0;            /* só a task battery escreve */
 static int s_bad = 0;              /* leituras inválidas seguidas */
 static int s_state = 0;            /* BSTAT_*; só battery_ingest() escreve */
@@ -107,6 +131,14 @@ static int s_vmax = 4200;          /* = extremo 100% da s_curve (padrão) */
 #define BATT_DROP_MV       25      /* queda p/ detectar "carregador saiu" */
 #define BATT_SETTLE_POLLS  150     /* 10 min máx. segurando o % */
 #define BATT_SETTLE_SAG_MV 90      /* sag do pico que encerra o assentamento */
+
+/* BAT.1c (v5.15.0): estabilidade do % sob carga. Campo (14ª rodada):
+ * brilho/Wi-Fi/falante movem a tensão ±50 mV; sag extremo 2815 mV. */
+#define BATT_SLOW_SHIFT      4     /* EMA lenta: (15·velho+novo)/16, τ≈64 s @4 s */
+#define BATT_PCT_DROP_POLLS  3     /* % cai no máx. 1 ponto a cada 12 s */
+#define BATT_PCT_RISE_POLLS  6     /* % sobe no máx. 1 ponto a cada 24 s… */
+#define BATT_PCT_RISE_HYST   2     /* …e só se a curva passar do exibido +2 */
+#define BATT_RISE_TOL        15    /* candidato a carregador: tolerância (mV) */
 
 /* BAT.1a: âncoras aprendidas (domínio da s_curve = 3300-4200 mV). */
 #define BATT_STD_MV_MIN    3300    /* extremo 0% da curva padrão */
@@ -199,8 +231,11 @@ void battery_reset_calibration(void)
     s_vmin = BATT_STD_MV_MIN;
     s_vmax = BATT_STD_MV_MAX;
     calib_persist();
-    ESP_LOGI(TAG, "âncoras resetadas p/ padrão da curva: %d-%d mV",
-             s_vmin, s_vmax);
+    /* BAT.1c: chamado da thread da UI — o % é religado pela task no poll
+     * seguinte (flag volatile; nada de escrever s_pct fora da task). */
+    s_recal = true;
+    ESP_LOGI(TAG, "âncoras resetadas p/ padrão da curva: %d-%d mV "
+             "(%% religado no próximo poll)", s_vmin, s_vmax);
 }
 
 int battery_anchor_min(void) { return s_vmin; }
@@ -238,10 +273,36 @@ BATT_VIS void battery_learn(int bmv)
     }
 }
 
+/* ---- BAT.1c: passo do % exibido na bateria ----
+ * A curva dá um "alvo" (cur); o exibido anda na direção dele com ritmo e
+ * banda morta: cai no máx. 1 ponto a cada BATT_PCT_DROP_POLLS; sobe só se
+ * cur passar de exibido+BATT_PCT_RISE_HYST, no máx. 1 ponto a cada
+ * BATT_PCT_RISE_POLLS. Uma descarga REAL (~0.5-1%/min) é muito mais lenta
+ * que o teto de queda (5%/min) — o passo nunca esconde o fim da bateria;
+ * o que ele filtra é a dança de ±5% que brilho/Wi-Fi/falante causavam. */
+static void batt_pct_paced(int cur)
+{
+    if (s_pct < 0) { s_pct = cur; s_pct_step = 0; return; }
+    s_pct_step++;
+    if (cur < s_pct && s_pct_step >= BATT_PCT_DROP_POLLS) {
+        s_pct--;
+        s_pct_step = 0;
+    } else if (cur > s_pct + BATT_PCT_RISE_HYST &&
+               s_pct_step >= BATT_PCT_RISE_POLLS) {
+        s_pct++;
+        s_pct_step = 0;
+    }
+}
+
 /* ---- BAT.2: máquina de estados carga/assentamento ----
  * Entra com a tensão JA compensada pelo divisor (mV de bateria).
- * Única dona de s_ema_mv/s_pct/s_state. Não-static sob BATTERY_UNIT_TEST
- * (BATT_VIS no topo) p/ o harness injetar perfis de tensão direto. */
+ * Única dona de s_ema_mv/s_slow_mv/s_pct/s_state. Não-static sob
+ * BATTERY_UNIT_TEST (BATT_VIS no topo) p/ o harness injetar perfis de
+ * tensão direto.
+ * BAT.1c: DOIS filtros — s_ema_mv (α=1/4, rápida: lógica de carga/
+ * assentamento da BAT.2, intocada) e s_slow_mv (α=1/16, τ≈64 s: fonte do
+ * % NA BATERIA, via batt_pct_paced). O % em carga segue a EMA rápida como
+ * antes (comportamento validado em campo na 13ª rodada). */
 BATT_VIS void battery_ingest(int bmv)
 {
     const int delta = (s_prev_mv < 0) ? 0 : bmv - s_prev_mv;
@@ -249,9 +310,26 @@ BATT_VIS void battery_ingest(int bmv)
 
     if (s_ema_mv < 0) {           /* 1ª leitura válida: ancora tudo */
         s_ema_mv = bmv;
+        s_slow_mv = bmv;
         s_pct = curve_pct(bmv);
+        s_pct_step = 0;
         s_state = BSTAT_BATTERY;
         return;
+    }
+
+    /* BAT.1c: EMA lenta sempre atualizada (round-to-nearest: >> em inteiro
+     * truncaria p/ -inf e deixaria o filtro estacionado ~8 mV abaixo). */
+    {
+        const int d = bmv - s_slow_mv;
+        s_slow_mv += (d >= 0 ? d + 8 : d - 8) >> BATT_SLOW_SHIFT;
+    }
+
+    if (s_recal) {                /* BAT.1a/1c: botão zerar → religa o % */
+        s_recal = false;
+        s_pct_step = 0;
+        s_pct = curve_pct(s_state == BSTAT_CHARGING ? s_ema_mv : s_slow_mv);
+        ESP_LOGI(TAG, "âncoras zeradas: %% religado na curva nova (%d%%)",
+                 s_pct);
     }
 
     switch (s_state) {
@@ -260,6 +338,7 @@ BATT_VIS void battery_ingest(int bmv)
             s_state = BSTAT_SETTLING;
             s_settle_polls = 0;
             s_settle_peak = s_ema_mv;
+            s_rise_pend = -1;
             ESP_LOGI(TAG, "carregador saiu: segurando %d%% enquanto a "
                      "tensão de carga assenta (%d mV)", s_pct, s_ema_mv);
             s_ema_mv = (s_ema_mv * 7 + bmv) / 8;   /* lenta p/ não vazar p/ % */
@@ -268,6 +347,7 @@ BATT_VIS void battery_ingest(int bmv)
         s_ema_mv = (s_ema_mv + bmv) / 2;           /* segue a carga rápido */
         if (s_ema_mv > s_settle_peak) s_settle_peak = s_ema_mv;
         s_pct = curve_pct(s_ema_mv);
+        s_pct_step = 0;
         break;
 
     case BSTAT_SETTLING:
@@ -279,6 +359,7 @@ BATT_VIS void battery_ingest(int bmv)
             ESP_LOGI(TAG, "carregador de volta: pct segue a tensão de carga");
             s_ema_mv = (s_ema_mv + bmv) / 2;
             s_pct = curve_pct(s_ema_mv);
+            s_pct_step = 0;
             break;
         }
         s_ema_mv = (s_ema_mv * 7 + bmv) / 8;       /* lenta: só diagnóstico */
@@ -288,21 +369,48 @@ BATT_VIS void battery_ingest(int bmv)
             (s_pre_chg_mv > 0 && s_ema_mv <= s_pre_chg_mv + 15)) {
             s_state = BSTAT_BATTERY;
             s_pct = curve_pct(s_ema_mv);           /* snap honesto p/ curva */
+            s_slow_mv = s_ema_mv;   /* BAT.1c: religa a lenta no valor assentado */
+            s_pct_step = 0;
             ESP_LOGI(TAG, "tensão assentada: %d%% (%d mV) após %d polls",
                      s_pct, s_ema_mv, s_settle_polls);
         }
         break;
 
     default: /* BSTAT_BATTERY */
-        if (delta >= BATT_RISE_MV) {
-            s_state = BSTAT_CHARGING;
-            s_pre_chg_mv = s_ema_mv;
-            s_settle_peak = bmv;
-            ESP_LOGI(TAG, "salto de +%d mV num poll: carregador presente "
-                     "(pct segue a tensão de carga)", delta);
+        /* BAT.1c: salto de carregador COM CONFIRMAÇÃO. +40 mV num poll só
+         * não basta mais: alívio de carga (dim do backlight, fim de beep,
+         * rajada Wi-Fi) recupera 50-150 mV num poll e fantasiava de
+         * carregador. Candidato: nível + salto ≥ 40. Confirma no poll
+         * seguinte se (a) o nível se SUSTENTOU (≥ candidato-15) e (b) está
+         * ACIMA da EMA lenta +40 — recuperação de sag volta AO nível do
+         * filtro; carregador levanta ACIMA dele (CC/CV). Custo: o sufixo
+         * "+" aparece 4 s depois — aceitável p/ evento de minutos. */
+        if (s_rise_pend >= 0) {
+            if (bmv >= s_rise_pend - BATT_RISE_TOL &&
+                bmv >= s_rise_slow + BATT_RISE_MV) {
+                s_state = BSTAT_CHARGING;
+                s_pre_chg_mv = s_rise_ema;
+                s_settle_peak = bmv;
+                ESP_LOGI(TAG, "carregador confirmado: +%d mV sustentado "
+                         "(pct segue a tensão de carga)", bmv - s_rise_ema);
+                s_rise_pend = -1;
+                s_ema_mv = (s_ema_mv + bmv) / 2;
+                s_pct = curve_pct(s_ema_mv);
+                s_pct_step = 0;
+                break;
+            }
+            ESP_LOGI(TAG, "salto p/ %d mV descartado: transiente de carga, "
+                     "não carregador", s_rise_pend);
+            s_rise_pend = -1;
+        } else if (delta >= BATT_RISE_MV) {
+            s_rise_pend = bmv;
+            s_rise_slow = s_slow_mv;
+            s_rise_ema = s_ema_mv;
+            ESP_LOGI(TAG, "salto candidato +%d mV (%d mV): confirmando no "
+                     "próximo poll", delta, bmv);
         }
         s_ema_mv = (s_ema_mv * 3 + bmv) / 4;
-        s_pct = curve_pct(s_ema_mv);
+        batt_pct_paced(curve_pct(s_slow_mv));      /* BAT.1c */
         break;
     }
 }
@@ -395,15 +503,20 @@ static void battery_task(void *arg)
                 battery_ingest(bmv);
                 battery_learn(bmv);   /* BAT.1a: usa s_state/s_pct do ingest */
                 s_node_mv = nmv;
-                s_batt_mv = s_ema_mv;
+                /* BAT.1c: a UI mostra o filtro do qual o % deriva (lenta na
+                 * bateria/assentando, rápida em carga) — mV e % coerentes. */
+                s_batt_mv = (s_state == BSTAT_CHARGING) ? s_ema_mv : s_slow_mv;
                 if (first) {
                     s_ready = true;
-                    ESP_LOGI(TAG, "bateria: %d%% | %d mV | nó %d mV | raw %d | %s",
-                             s_pct, s_ema_mv, nmv, s_raw,
+                    ESP_LOGI(TAG, "bateria: %d%% | %d mV | lenta %d mV | "
+                             "nó %d mV | raw %d | %s",
+                             s_pct, s_ema_mv, s_slow_mv, nmv, s_raw,
                              s_calibrated ? "calibrado (eFuse)" : "fallback linear");
                 } else if (++s_polls % BATT_LOG_EVERY == 0) {
-                    ESP_LOGI(TAG, "bateria: %d%% | %d mV | nó %d mV | raw %d | %s",
-                             s_pct, s_ema_mv, nmv, s_raw, battery_state_str());
+                    ESP_LOGI(TAG, "bateria: %d%% | %d mV | lenta %d mV | "
+                             "nó %d mV | raw %d | %s",
+                             s_pct, s_ema_mv, s_slow_mv, nmv, s_raw,
+                             battery_state_str());
                 }
             } else if (++s_bad == 3) {
                 ESP_LOGW(TAG, "leituras fora da faixa (%d mV no nó) — divisor/ADC?",
@@ -456,6 +569,12 @@ esp_err_t battery_start(void)
 bool battery_ready(void) { return s_ready; }
 int battery_percent(void) { return s_pct; }
 int battery_mv(void) { return s_batt_mv; }
+
+#ifdef BATTERY_UNIT_TEST
+/* BAT.1c: accessor só p/ o harness de host (seções L–O verificam a EMA
+ * lenta contra o % exibido). Não existe no firmware. */
+int battery_slow_mv(void) { return s_slow_mv; }
+#endif
 int battery_node_mv(void) { return s_node_mv; }
 bool battery_calibrated(void) { return s_calibrated; }
 

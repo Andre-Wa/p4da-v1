@@ -686,6 +686,10 @@ toda a interface".
       dobrado. v5.14.0: log do beep movido p/ o INÍCIO do som (na
       v5.13.0 saía após o write de 1200 ms e embaralhava a leitura do
       log de campo).
+      ✅ 14ª rodada (v5.14.0, 2026-10-15): log de campo confirma o
+      descarte no clique duplo (`W audio_i2s: beep descartado: outro
+      beep em andamento (clique duplo?)`) com I2S reaberto 1x por beep
+      — sem som duplicado (item 6 do relatório).
 - [ ] Seletor de saída em Config → Tela/Sistema: UAC | interno | auto
   (UAC se presente); mix de decisão documentado em USB.md/HARDWARE.md.
 - [ ] Conector de bateria: validação de carga/descarga com áudio tocando
@@ -730,9 +734,48 @@ toda a interface".
       "Zerar calibração da bateria"; sufixo de estado na status bar
       (`90%+`/`90%~`) e linha Bateria ao vivo a cada 4 s = teste de
       bateria SEM serial. Teste de host G–K. Docs: POWER.md §BAT.1a.
+      ✅ VALIDADO EM HARDWARE 2026-10-15 (14ª rodada, v5.14.0): botão
+      "Zerar calibração da bateria" restaura os padrões (item 3);
+      âncoras NVS vivas no boot (`battery: âncoras da bateria (NVS):
+      2815-4200 mV`); a linha ao vivo do Config→Sistema sustentou o
+      teste de descarga SEM serial (2815-3950 mV, ±50 mV de dança).
+- [x] **BAT.1c (v5.15.0, 2026-10-15)**: estabilidade do % sob carga —
+      queixa da 14ª rodada ("brilho/wifi influencia a voltagem lida, %
+      variando muito"): EMA lenta (τ≈64 s) como fonte do % na bateria;
+      % exibido a PASSO (queda ≤1 pt/12 s; subida só fora de banda
+      morta de 2 pts, ≤1 pt/24 s); salto de carregador com confirmação
+      de 2 polls (alívio de carga de dim/beep não fantasia mais de
+      "+"); "Zerar calibração" religa o % na hora; log serial imprime
+      as duas EMAs. Teste de host L–O. Docs: POWER.md §BAT.1c.
+- [ ] BAT.1c VALIDAÇÃO HW (15ª rodada): trocar brilho e ligar/desligar
+      Wi-Fi em uso: % oscila ≤±2 pts e devagar; nenhum "+" fantasma ao
+      dimerizar/beep terminar; descarga longa continua coerente.
 - [ ] **BAT.1b**: refinar a FORMA da curva (`s_curve`) contra multímetro
       + autonomia por degrau na bateria (âncoras já corrigem extremos;
       procedimento sem serial em POWER.md §BAT.1a item 4).
+
+### Wi-Fi — diagnóstico de desconexão + recuperação de espera (v5.15.0)
+- [x] Incidente da 14ª rodada explicado pelo log: AP instável por
+      minutos (reason 15 = 4WAY_HANDSHAKE_TIMEOUT ×2, NO_AP_FOUND,
+      sumiço do scan) + manager em espera PERMANENTE ("nenhuma rede
+      salva presente") — o AP voltou e o PDA seguiu offline até o
+      usuário re-salvar. Análise e tabela: docs/WIFI.md §Diagnóstico.
+- [x] Toda desconexão loga o reason pelo NOME (tabela conferida contra
+      `esp_wifi_types_generic.h` do IDF 5.5.1); ramo NO_AP_FOUND loga;
+      fim do "(tentativa 7/3)" — sufixo honesto (auth n/3 na rede |
+      insistindo | escolhida por scan, RSSI).
+- [x] Espera ociosa com re-scan a cada 120 s (acorda em ≤0,5 s por ação
+      manual) + limpeza das marcas de falha a cada ~10 min — AP que
+      volta reconecta SOZINHO. Custo: scan ~0,3 s/2 min só desconectado
+      e fora do standby.
+- [x] `build_sta_cfg`: config STA de fonte única (boot/apply/manual
+      montavam wifi_config_t separados; só o manual levava pmf.capable
+      — deriva eliminada; no IDF 5.5 o campo é deprecado, mas caminhos
+      idênticos são a regra).
+- [ ] VALIDAÇÃO HW (15ª rodada): derrubar/religar o AP por ~2 min com o
+      PDA ocioso: `nenhuma das N rede(s) salva(s) presente no scan —
+      nova varredura em 120 s` e reconexão SOZINHO quando o AP voltar;
+      reasons nomeados no log de qualquer desconexão.
 
 ### UI de campo — fixes da 13ª rodada (v5.14.0)
 - [x] Gesto de voltar vs. Config: Settings opta OUT do back-swipe (a
@@ -740,6 +783,9 @@ toda a interface".
       comia os cliques) + tira 18→10 px (edição de campo adotada; o
       gesto exige arrasto >36 px, então não perde função). Regra e
       tabela em docs/UI.md §opt-out.
+      ✅ 14ª rodada (2026-10-15): "da forma que fiz a alteração do
+      swipe back com 10 px, já funcionava bem" (item 4); opt-out do
+      Settings confirmado como conveniente p/ edições de texto.
 - [x] Botões de texto com largura intrínseca: rótulo dentro de
       HorizontalLayout c/ `Theme.btn-px` (13 px) → preferred/min = texto
       + 26 px; fim do corte de rótulo por `width:` curto ("violeta"/
