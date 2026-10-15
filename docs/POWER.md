@@ -177,8 +177,10 @@ carregador saiu → congela o % até assentar (mata o efeito sanfona
 97→94→97 de tirar/recolocar); em "assentando", só volta a "carregando"
 se a tensão retornar ao pico−30 mV (rebound pós-unplug não conta).
 Teste de host: `tools/hosttest/host_batt_test.c` (perfis do log real).
-O estado aparece no log periódico e no Config→Sistema
-(`battery_describe`): "bateria" | "carregando" | "assentando".
+O estado aparece no log periódico, no Config→Sistema
+(`battery_describe`) e, desde a v5.14.0, no SUFIXO da status bar
+(`90%+` carregando, `90%~` assentando) p/ leitura sem serial:
+"bateria" | "carregando" | "assentando".
 
 Limites honestos: nos primeiros minutos APÓS conectar o carregador o %
 sobe rápido (terminal em CV) e é otimista; "100%" confiável só em
@@ -189,16 +191,63 @@ reais têm ~0.6-0.9 Ah apesar de rótulos "3000 mAh" — a autonomia virá
 menor que o rótulo. Químicas OUTRAS (LiFePO4 3.6 V máx, Li-ion 4.35 V)
 exigem editar `s_curve` em main/battery.c (e o teto BATT_MV_MAX).
 
-**BAT.1 — calibrar e validar (com bateria de verdade, sem USB):**
-1. Multímetro na bateria + `battery:` no log, em repouso, a cada ~10%:
-   ajustar `s_curve` (main/battery.c) aos pares medidos.
+### BAT.1a — âncoras aprendidas em campo (v5.14.0, IMPLEMENTADO)
+
+Medição de campo da 13ª rodada (v5.13.0, célula 14500 "3000 mAh"):
+**4156 mV em carga** no divisor e **3.9 V no multímetro** logo após
+despluguar. Não é erro de leitura: é a tensão de TERMINAL do CC-CV
+(relaxo de ~250 mV quando a corrente de carga some, agravado pela
+resistência interna alta de 14500 genérica). Consequência: o % NA
+bateria caía para a faixa de 68% com a célula ainda cheia — a curva
+genérica 3300-4200 mV não conhece os EXTREMOS reais desta célula.
+
+Resposta (sem multímetro, sem serial, sem botão de calibração manual):
+o módulo aprende os extremos sozinho e remapeia a curva entre eles.
+
+| âncora | quando aprende | guardas |
+|---|---|---|
+| `vmin` (0%) | estado **bateria** E pct ≤ 30 (perto do vazio: é onde o corte real acontece) | [2800,4400] mV abs.; vão ≥ 600 mV; histerese 15 mV; simétrica (célula que corta em 3.45 V SOBE a âncora — senão o PDA "morre aos 15%") |
+| `vmax` (100%) | estado **carregando**, acima da âncora atual + 15 mV (topo CC-CV; meia-carga não move) | idem; só sobe |
+
+Persistência: NVS namespace `batt`, chaves i32 `vmin`/`vmax` (escrita só
+quando uma âncora move > 15 mV — dezenas de writes na vida do aparelho).
+`battery_calib_load()` valida o par no boot (faixas + vão); par inválido
+= padrão de fábrica. Remapeamento: `std_mv()` = 3300 + (mv−vmin)·900/
+(vmax−vmin); a FORMA da curva continua a LiPo genérica (refino de forma
+segue em BAT.1b). Botão **"Zerar calibração da bateria"** no
+Config→Sistema restaura 3300-4200 mV e persiste.
+
+**Teste de campo SEM serial** (o USB-C que loga é o que carrega — na
+bateria não há log):
+1. Status bar mostra o estado por sufixo: `90%+` = carregando, `90%~` =
+   assentando, sem sufixo = bateria (só ASCII, sem risco de glifo).
+2. Config→Sistema, linha "Bateria", atualiza a cada 4 s AO VIVO:
+   `NN% (mmmm mV, ânc VMIN-VMAX mV, ADC2_CH4/GPIO53, cal. eFuse[, estado])`
+   — é o "serial visual": dá p/ fotografar a tela e coletar os pares
+   mV/estado de uma descarga inteira.
+3. Procedimento de aprendizado: use a placa NA BATERIA até ela desligar
+   sozinha (o último `vmin` fica gravado no NVS ANTES do corte — a
+   gravação ocorre a cada novo mínimo com pct ≤ 30, não no desligamento);
+   depois carregue até o fim com a placa ligada (o topo CC-CV grava
+   `vmax`). Reconecte o USB e leia as âncoras na linha Bateria (ou no
+   log `battery: âncoras da bateria (NVS): VMIN-VMAX mV`).
+4. Autonomia por degrau: com a linha ao vivo, anote %/mV e hora em cada
+   troca de degrau (ACTIVE/DIM/STANDBY) — fecha o item 3 do BAT.1b sem
+   amperímetro.
+
+Teste de host: `tools/hosttest/host_batt_test.c` seções G–K (identidade
+com âncoras de fábrica, aprendizado simétrico de vmin, vmax em carga,
+guardas de pct/absoluto/histerese/vão, round-trip NVS + reset).
+
+### BAT.1b — o que resta calibrar (com multímetro)
+
+1. Pares multímetro × `battery:` em repouso a cada ~10% p/ refinar a
+   FORMA da `s_curve` (as âncoras já corrigem os extremos; o joelho do
+   meio segue genérico).
 2. Conferir o fator do divisor: `V_bat/V_nó` medido deve dar ~1.68
    (tolerância dos resistores); se divergir >2%, ajustar
    `BOARD_BATT_DIV_R_TOP_K/BOT_K` no board_config.h.
-3. Com o log de % ao longo de uma descarga completa, estimar autonomia
-   por degrau (ACTIVE/DIM/STANDBY) — fecha o "Estágio 0 — MEDIR" sem
-   amperímetro para os números de USO (não de corrente).
-4. Anotar o comportamento em carga: durante CC/CV a leitura lê alto de
+3. Anotar o comportamento em carga: durante CC/CV a leitura lê alto de
    propósito; "100%" só é confiável em repouso pós-carga.
 
 ## SD × light sleep: por que remontamos no wake

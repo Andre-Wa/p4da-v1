@@ -156,9 +156,13 @@ export component AppWindow inherits Window {
     in property <string> cfg-store-info: "";
     in property <string> cfg-batt-info: "";
     in property <string> cfg-wifi-info: "";
+    // v5.14.0: aba corrente exposta p/ harness offscreen (modo "settings"/
+    // "settings2") — antes o `tab` do SettingsScreen não era acessível.
+    in-out property <int> cfg-tab: 0;
     callback cfg-open-networks();
     callback cfg-set-cursor(string);
     callback cfg-set-accent(string);
+    callback cfg-batt-reset();   // BAT.1a: zera âncoras aprendidas
     callback cfg-save();
     callback cfg-reset();
     callback cfg-sleep-now();
@@ -194,8 +198,13 @@ export component AppWindow inherits Window {
     // que não tem controles), mas `qs-pull-allowed` existe para futuras
     // telas com elementos interativos no topo. `in-out` permite que o
     // harness/C++ forcem estados para teste.
+    // v5.14.0: Settings também opta OUT — a sidebar de abas começa em
+    // x≈8px e a tira de voltar (hit-test no TOPO por ordem de declaração)
+    // comia os cliques nas abas (relato de campo da 13ª rodada). A tela
+    // já tem botão "Voltar" próprio em todas as abas.
     in-out property <bool> back-swipe-allowed: root.active-app != AppState.Launcher
-        && root.active-app != AppState.Editor;
+        && root.active-app != AppState.Editor
+        && root.active-app != AppState.Settings;
     in-out property <bool> qs-pull-allowed: true;
 
     // Âncora de rasterização: o software renderer pré-rasteriza apenas os
@@ -374,9 +383,11 @@ export component AppWindow inherits Window {
                 store-info: root.cfg-store-info;
                 battery-info: root.cfg-batt-info;
                 wifi-info: root.cfg-wifi-info;
+                tab <=> root.cfg-tab;
                 open-networks => { root.cfg-open-networks(); }
                 set-cursor(c) => { root.cfg-set-cursor(c); }
                 set-accent(a) => { root.cfg-set-accent(a); }
+                batt-reset => { root.cfg-batt-reset(); }
                 save => { root.cfg-save(); }
                 reset => { root.cfg-reset(); }
                 sleep-now => { root.cfg-sleep-now(); }
@@ -396,6 +407,9 @@ export component AppWindow inherits Window {
     // horizontal). Reusa os MESMOS callbacks dos botões "Voltar" — no
     // gerenciador, fm-back() fecha folha/picker ou sobe de diretório antes
     // de sair do app (semântica idêntica à barra).
+    // v5.14.0: tira 18px→10px (edição de campo adotada) — 18px invadia os
+    // alvos de toque próximos da borda; o gesto precisa de >36px de arrasto
+    // horizontal, então a tira fina não prejudica o swipe.
     if root.back-swipe-allowed && !root.fm-prompt: Rectangle {
         x: 0px;
         y: Theme.status-h;

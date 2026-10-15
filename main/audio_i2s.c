@@ -164,6 +164,12 @@ esp_err_t audio_i2s_beep(int ms)
         return ESP_FAIL;
     }
     s_chan_on = true;   /* open religa o canal após o reconfig interno */
+    /* v5.14.0: log no INÍCIO do som. Na v5.13.0 esta linha saía DEPOIS do
+     * write bloqueante de 1200 ms (fim da função) e a leitura de campo
+     * ficava enganosa: "Open codec device OK" → (1,2 s de silêncio no log)
+     * → "beep ... no falante" → W "descartado" de cliques que na verdade
+     * aconteceram DURANTE o beep. A ordem do log agora bate com o ouvido. */
+    ESP_LOGI(TAG, "beep 440 Hz %d ms no falante", ms);
     const int total = BEEP_RATE * ms / 1000;
     int16_t buf[512];           /* 256 amostras estéreo */
     int pos = 0;
@@ -186,6 +192,5 @@ esp_err_t audio_i2s_beep(int ms)
     esp_codec_dev_close(s_dev);   /* desabilita o canal internamente */
     s_chan_on = false;
     xSemaphoreGive(s_beep_mtx);
-    ESP_LOGI(TAG, "beep 440 Hz %d ms no falante", ms);
     return ESP_OK;
 }

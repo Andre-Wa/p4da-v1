@@ -53,6 +53,17 @@ Regras:
 - Botões por papel: `Filled` = ação primária (Salvar), `Tonal` = secundária
   (Att/Sobe/Tecl/tiles), `Danger` = destrutiva (Apagar/Hibernar),
   `Ghost` = neutra (Voltar/Limpar).
+- **Largura de botão de texto (v5.14.0)**: o rótulo vive dentro de um
+  `HorizontalLayout` com `padding-left/right: Theme.btn-px` (13 px), então
+  o botão tem largura INTRÍNSECA = texto + 26 px; dentro de layouts o
+  solver nunca o comprime abaixo disso (fim do corte de rótulo por
+  `width:` fixo curto — "violeta"/"traço" @76 px, relato de campo da
+  13ª rodada). Regras de uso: (a) NÃO dê `width:` a botão de texto a menos
+  que seja um mínimo visual deliberado ≥ intrínseca; (b) linha que deve
+  preencher a largura da tela: `horizontal-stretch: 1` nos botões (o
+  stretch >0 concentra o espaço neles e deixa Text/rótulos no preferred);
+  (c) filho direto de VerticalLayout já estica à largura da coluna sem
+  width nenhum ("Teste som", "Zerar calibração da bateria").
 - Semânticas: `success` p/ diretórios/scripts/SD, `tertiary` p/ dirty/bateria,
   `error*` p/ destrutivo.
 
@@ -219,6 +230,11 @@ Sem hardware dá para ver EXATAMENTE o que o device renderiza:
 3. alimentar propriedades `ed-*` como o `ed_push_ui` faz e dumpar PPM/PNG.
 - Fonte de referência: `tools/offscreen_render_harness.cpp` (compila só no
   host; não entra no firmware).
+- Modos: reading, reading2, edit, networks, music, prompt, panel,
+  paneldrag, settings, settings2, coltest, fontpitch — os dois de
+  settings (v5.14.0) auditam as abas Sistema/Entrada do Config sem
+  hardware (largura de botões, linhas cheias, linha de bateria c/
+  âncoras, status bar c/ sufixo de estado).
 - Modos: `reading`, `reading2`, `edit`, `prompt` e (M4.12) `panel` /
   `paneldrag` — estes últimos fixam `qs-dragging=true` + `qs-drag` em 192/110
   px, porque durante o drag a animação tem duração 0 ms e o frame único do
@@ -255,13 +271,20 @@ mecanismo é declarativo, em `app_ui.slint`:
 
 | Propriedade | Default | Efeito em `false` |
 |---|---|---|
-| `back-swipe-allowed` | `active-app != Launcher && != Editor` | tira da borda esquerda sai do hit-test (a tela vira dona do arrasto) |
+| `back-swipe-allowed` | `active-app != Launcher && != Editor && != Settings` | tira da borda esquerda sai do hit-test (a tela vira dona do arrasto) |
 | `qs-pull-allowed` | `true` | tira do topo deixa de capturar o pulldown |
 
 - `in-out`: o harness/C++ podem forçar p/ teste; o binding reage a
   `active-app` sozinho (trocou de tela, a política troca junto).
 - O Launcher "opta" por ordem de empilhamento (a camada dele vence o
   hit-test) — mesmo efeito, mecanismo histórico.
+- **Settings opta out (v5.14.0)**: a sidebar de abas começa em x≈8 px e a
+  tira de voltar tem hit-test no TOPO (declarada depois do conteúdo) —
+  com 18 px de largura ela COMIA os cliques nos ícones de aba (relato de
+  campo da 13ª rodada). A tira também afinou p/ 10 px (edição de campo
+  adotada): o gesto exige >36 px de arrasto horizontal dominante, então
+  tira fina não prejudica o swipe em telas que o mantêm. Settings já tem
+  botão "Voltar" em toda aba — perder o gesto não custa nada.
 - Para uma tela nova optar por não ter back-swipe: acrescente a condição
   no binding de `back-swipe-allowed` (ponto único, documentado aqui).
 - O pulldown continua GLOBAL de propósito: a tira cobre só a status bar

@@ -82,6 +82,7 @@ export component SettingsScreen inherits Rectangle {
     callback open-networks();
     callback set-cursor(string);
     callback set-accent(string);
+    callback batt-reset();   // BAT.1a (v5.14.0): zera âncoras da bateria
     callback go-back();
 
     HorizontalLayout {
@@ -142,6 +143,8 @@ export component SettingsScreen inherits Rectangle {
             }
 
             if root.tab == 1: VerticalLayout {
+                // v5.14.0 (edição de campo adotada): sem `width:` fixo —
+                // filho de VerticalLayout estica à largura da coluna.
                 GhostButton { text: "Teste som (falante)"; clicked => { root.test-speaker(); } }
                 spacing: Theme.sp-md;
                 GridLayout {
@@ -153,12 +156,23 @@ export component SettingsScreen inherits Rectangle {
                 }
                 HorizontalLayout {
                     spacing: Theme.sp-sm;
-                    TonalButton { text: "Dormir agora"; clicked => { root.sleep-now(); } }
-                    DangerButton { text: "Hibernar"; clicked => { root.hibernate(); } }
-                    GhostButton { text: "Padrão"; clicked => { root.reset(); } }
+                    // v5.14.0: stretch igual p/ a linha preencher a largura
+                    // da tela (antes os botões paravam no meio da coluna).
+                    TonalButton { horizontal-stretch: 1; text: "Dormir agora"; clicked => { root.sleep-now(); } }
+                    DangerButton { horizontal-stretch: 1; text: "Hibernar"; clicked => { root.hibernate(); } }
+                    GhostButton { horizontal-stretch: 1; text: "Padrão"; clicked => { root.reset(); } }
                 }
                 Text { text: "Armazenamento: " + root.store-info; color: Theme.on-surface-var; font-size: Theme.type-label; }
-                Text { text: "Bateria: " + root.battery-info; color: Theme.on-surface-var; font-size: Theme.type-label; }
+                Text { text: "Bateria: " + root.battery-info; color: Theme.on-surface-var; font-size: Theme.type-label; wrap: word-wrap; }
+                // BAT.1a (v5.14.0): âncoras mín/máx aprendidas em campo;
+                // o botão restaura o padrão da curva (3300-4200 mV).
+                GhostButton { text: "Zerar calibração da bateria"; clicked => { root.batt-reset(); } }
+                Text {
+                    text: "A linha Bateria atualiza a cada 4 s (teste sem serial: use na bateria até desligar e carregue até o fim; as âncoras \"ânc\" aparecem aí).";
+                    font-size: Theme.type-tiny;
+                    color: Theme.on-surface-var;
+                    wrap: word-wrap;
+                }
                 Text {
                     text: "Hibernar = desligar com sessão restaurada no próximo boot.";
                     font-size: Theme.type-tiny;
@@ -178,18 +192,22 @@ export component SettingsScreen inherits Rectangle {
                     Text { text: "Cursor do editor:"; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
                     // Rótulos em palavra (M4.8): "■" não existe na Roboto
                     // Mono (default da UI) — nada de glifo fora do charset.
-                    GhostButton { width: 80px; fsize: Theme.type-label; text: "barra"; clicked => { root.set-cursor("bar"); } }
-                    GhostButton { width: 80px; fsize: Theme.type-label; text: "traço"; clicked => { root.set-cursor("under"); } }
-                    GhostButton { width: 80px; fsize: Theme.type-label; text: "bloco"; clicked => { root.set-cursor("block"); } }
+                    // v5.14.0: SEM width fixo (o usuário tentou 76→80px em
+                    // campo; a causa raiz era a falta de largura intrínseca
+                    // do botão — buttons.slint agora deriva min do rótulo).
+                    // Stretch igual → a linha preenche a largura da tela.
+                    GhostButton { horizontal-stretch: 1; fsize: Theme.type-label; text: "barra"; clicked => { root.set-cursor("bar"); } }
+                    GhostButton { horizontal-stretch: 1; fsize: Theme.type-label; text: "traço"; clicked => { root.set-cursor("under"); } }
+                    GhostButton { horizontal-stretch: 1; fsize: Theme.type-label; text: "bloco"; clicked => { root.set-cursor("block"); } }
                 }
                 HorizontalLayout {
                     spacing: Theme.sp-sm;
                     Text { text: "Acento:"; color: Theme.on-surface; font-size: Theme.type-body; vertical-alignment: center; }
-                    GhostButton { width: 80px; fsize: Theme.type-label; text: "ciano"; clicked => { root.set-accent("cyan"); } }
-                    GhostButton { width: 80px; fsize: Theme.type-label; text: "violeta"; clicked => { root.set-accent("violet"); } }
-                    GhostButton { width: 80px; fsize: Theme.type-label; text: "verde"; clicked => { root.set-accent("green"); } }
-                    GhostButton { width: 80px; fsize: Theme.type-label; text: "âmbar"; clicked => { root.set-accent("amber"); } }
-                    GhostButton { width: 80px; fsize: Theme.type-label; text: "rosa"; clicked => { root.set-accent("pink"); } }
+                    GhostButton { horizontal-stretch: 1; fsize: Theme.type-label; text: "ciano"; clicked => { root.set-accent("cyan"); } }
+                    GhostButton { horizontal-stretch: 1; fsize: Theme.type-label; text: "violeta"; clicked => { root.set-accent("violet"); } }
+                    GhostButton { horizontal-stretch: 1; fsize: Theme.type-label; text: "verde"; clicked => { root.set-accent("green"); } }
+                    GhostButton { horizontal-stretch: 1; fsize: Theme.type-label; text: "âmbar"; clicked => { root.set-accent("amber"); } }
+                    GhostButton { horizontal-stretch: 1; fsize: Theme.type-label; text: "rosa"; clicked => { root.set-accent("pink"); } }
                 }
             }
 
@@ -197,6 +215,8 @@ export component SettingsScreen inherits Rectangle {
                 spacing: Theme.sp-md;
                 Text { text: "Wi-Fi: " + root.wifi-info; color: Theme.on-surface; font-size: Theme.type-body; }
                 SwitchRow { label: "Wi-Fi ligado (radio)"; value <=> root.wifi-on; }
+                // v5.14.0: sem width fixo → preenche a coluna (consistente
+                // com "Teste som" na aba Sistema).
                 TonalButton { text: "Abrir tela de redes"; clicked => { root.open-networks(); } }
                 Text {
                     text: "Credenciais em config/wifi.lua (SSID, senha, auto_connect).";
@@ -208,7 +228,7 @@ export component SettingsScreen inherits Rectangle {
 
             if root.tab == 4: VerticalLayout {
                 spacing: Theme.sp-sm;
-                Text { text: "PDA p4da — M5a.1"; color: Theme.on-surface; font-size: Theme.type-title; font-weight: 700; }
+                Text { text: "PDA p4da — v5.14.0 (M5c + BAT)"; color: Theme.on-surface; font-size: Theme.type-title; font-weight: 700; }
                 Text { text: "Placa: GUITION JC4880P443C_I_W (ESP32-P4 + C6)"; color: Theme.on-surface-var; font-size: Theme.type-label; }
                 Text { text: "IDF 5.5.1 · Slint 1.12.1 · Lua 5.5 · ESP-Hosted 2.12.9"; color: Theme.on-surface-var; font-size: Theme.type-label; }
                 Text { text: "Ícones: Material Icons (Apache-2.0) · Fonte: PDA Mono 400/700 (Apache-2.0)"; color: Theme.on-surface-var; font-size: Theme.type-label; wrap: word-wrap; }

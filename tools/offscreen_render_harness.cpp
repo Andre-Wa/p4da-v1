@@ -157,6 +157,24 @@ int main(int argc, char **argv)
         ui->set_net_current(slint::SharedString(""));
         lines = { "", "", "" };
         styles = { 9, 9, 9 };
+    } else if (mode == "settings" || mode == "settings2") {
+        /* v5.14.0: auditoria visual das abas de Config — Sistema (tab 1)
+         * e Entrada (tab 2): botões com largura intrínseca do rótulo,
+         * linhas que preenchem a coluna, gesto de voltar FORA do hit-test
+         * (sidebar de abas clicável desde x≈8px) e linha de bateria ao
+         * vivo c/ âncoras BAT.1a. */
+        ui->set_active_app(AppState::Settings);
+        ui->set_cfg_tab(mode == "settings" ? 1 : 2);
+        ui->set_cfg_store_info(slint::SharedString("SD ok · 1.8 GB livres"));
+        ui->set_cfg_batt_info(slint::SharedString(
+            "90% (4084 mV, ânc 3380-4260 mV, ADC2_CH4/GPIO53, cal. eFuse)"));
+        ui->set_cfg_wifi_info(slint::SharedString("Redstone F3"));
+        ui->set_status_batt(slint::SharedString("90%+"));
+        ui->set_status_store(slint::SharedString("SD ok"));
+        ui->set_status_store_icon(slint::SharedString("sd"));
+        ui->set_status_pwr(slint::SharedString("ATIVO"));
+        lines = { "", "", "" };
+        styles = { 9, 9, 9 };
     } else if (mode == "prompt") {
         ui->set_active_app(AppState::FileManager);
         ui->set_fm_prompt(true);

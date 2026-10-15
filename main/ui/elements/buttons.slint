@@ -17,13 +17,21 @@ export component FilledButton inherits Rectangle {
     background: root.enabled ? Theme.primary : Theme.surface-2;
     clip: true;
 
-    Text {
-        text: root.text;
-        font-size: root.fsize;
-        font-weight: 700;
-        color: root.enabled ? Theme.on-primary : Theme.on-surface-var;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    // v5.14.0: texto num layout c/ padding → o botão ganha largura
+    // intrínseca (preferred/min) do rótulo; dentro de layouts o solver
+    // nunca o comprime abaixo disso (fim do corte "violeta"@76px).
+    HorizontalLayout {
+        alignment: center;
+        padding-left: Theme.btn-px;
+        padding-right: Theme.btn-px;
+        Text {
+            text: root.text;
+            font-size: root.fsize;
+            font-weight: 700;
+            color: root.enabled ? Theme.on-primary : Theme.on-surface-var;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
     Rectangle {
         width: 100%;
@@ -51,12 +59,17 @@ export component TonalButton inherits Rectangle {
     background: root.enabled ? Theme.secondary-container : Theme.surface-2;
     clip: true;
 
-    Text {
-        text: root.text;
-        font-size: root.fsize;
-        color: root.enabled ? Theme.on-secondary-container : Theme.on-surface-var;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    HorizontalLayout {
+        alignment: center;
+        padding-left: Theme.btn-px;
+        padding-right: Theme.btn-px;
+        Text {
+            text: root.text;
+            font-size: root.fsize;
+            color: root.enabled ? Theme.on-secondary-container : Theme.on-surface-var;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
     Rectangle {
         width: 100%;
@@ -86,12 +99,17 @@ export component DangerButton inherits Rectangle {
     border-color: root.enabled ? Theme.error : Theme.outline-var;
     clip: true;
 
-    Text {
-        text: root.text;
-        font-size: root.fsize;
-        color: root.enabled ? Theme.on-error-container : Theme.on-surface-var;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    HorizontalLayout {
+        alignment: center;
+        padding-left: Theme.btn-px;
+        padding-right: Theme.btn-px;
+        Text {
+            text: root.text;
+            font-size: root.fsize;
+            color: root.enabled ? Theme.on-error-container : Theme.on-surface-var;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
     Rectangle {
         width: 100%;
@@ -121,12 +139,17 @@ export component GhostButton inherits Rectangle {
     border-color: root.enabled ? Theme.outline : Theme.outline-var;
     clip: true;
 
-    Text {
-        text: root.text;
-        font-size: root.fsize;
-        color: root.enabled ? Theme.on-surface-var : Theme.on-surface-var;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    HorizontalLayout {
+        alignment: center;
+        padding-left: Theme.btn-px;
+        padding-right: Theme.btn-px;
+        Text {
+            text: root.text;
+            font-size: root.fsize;
+            color: root.enabled ? Theme.on-surface-var : Theme.on-surface-var;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
     Rectangle {
         width: 100%;

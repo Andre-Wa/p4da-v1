@@ -38,9 +38,11 @@ extern "C" {
  *    battery.c); vale p/ qualquer célula 4.2 V (14500, 18650, LiPo): o que
  *    muda entre elas é a CAPACIDADE (autonomia), não a curva de tensão.
  *    Químicas diferentes (LiFePO4, 4.35 V) exigem editar a s_curve.
+ *    BAT.1a (v5.14.0): os EXTREMOS da curva se ajustam sozinhos à célula
+ *    (âncoras vmin/vmax aprendidas e persistidas no NVS) — ver battery.c.
  *  - Sob carga pesada (tela + falante) a tensão cai por resistência
- *    interna e o % lê pessimista. Calibrar depois contra multímetro
- *    (docs/POWER.md, BAT.1).
+ *    interna e o % lê pessimista. Refino da FORMA da curva contra
+ *    multímetro segue em BAT.1b (docs/POWER.md, §BAT.1).
  *  - O divisor consome ~25 uA permanentes (4.2 V / 168 K) — irrelevante
  *    perto do consumo de tela/C6.
  */
@@ -66,11 +68,25 @@ bool battery_calibrated(void);
 /** BAT.2: "bateria" | "carregando" | "assentando" (string estática). */
 const char *battery_state_str(void);
 
-/** Curto p/ status bar: "87%" | "--". Thread-safe (cópia). */
+/** Curto p/ status bar: "87%" | "87%+" (carregando) | "87%~" (assentando)
+ *  | "--". O sufixo existe p/ leitura de campo SEM serial (na bateria o
+ *  log USB não existe). Thread-safe (cópia). */
 void battery_status_str(char *buf, int sz);
 
-/** Longo p/ Config→Sistema: "87% (4012 mV, ADC2_CH4/GPIO53, cal.)". */
+/** Longo p/ Config→Sistema: "87% (4012 mV, ânc 3300-4200 mV,
+ *  ADC2_CH4/GPIO53, cal. eFuse[, estado])". Atualizado ao vivo a cada 4 s
+ *  (v5.14.0) — teste de bateria sem serial se faz por esta linha. */
 void battery_describe(char *buf, int sz);
+
+/** BAT.1a (v5.14.0): âncoras mín/máx do remapeamento da curva (mV).
+ *  Padrão de fábrica = domínio da s_curve (3300-4200); o módulo aprende
+ *  sozinho em campo (vmin perto do vazio, vmax no topo da carga) e
+ *  persiste no NVS (ns "batt"). */
+int battery_anchor_min(void);
+int battery_anchor_max(void);
+
+/** Restaura as âncoras de fábrica (botão Config→Sistema). Persiste. */
+void battery_reset_calibration(void);
 
 #ifdef __cplusplus
 }

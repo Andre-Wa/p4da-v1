@@ -680,6 +680,12 @@ toda a interface".
       Volume default do codec 40→60 e ganho do beep 20000→26000
       (`BOARD_SPK_VOL_DEFAULT`/`BOARD_BEEP_GAIN`): falante de telefone
       antigo relatado baixo em campo.
+      ✅ VALIDADO EM HARDWARE 2026-10-12 (13ª rodada, v5.13.0): cliques
+      em rajada = 1 beep por janela + `W beep descartado` por clique
+      engolido; 5 beeps completos p/ cliques espaçados ≥1,2 s; sem som
+      dobrado. v5.14.0: log do beep movido p/ o INÍCIO do som (na
+      v5.13.0 saía após o write de 1200 ms e embaralhava a leitura do
+      log de campo).
 - [ ] Seletor de saída em Config → Tela/Sistema: UAC | interno | auto
   (UAC se presente); mix de decisão documentado em USB.md/HARDWARE.md.
 - [ ] Conector de bateria: validação de carga/descarga com áudio tocando
@@ -711,8 +717,40 @@ toda a interface".
       `tools/hosttest/host_batt_test.c`; fix cosmético de print
       (adc_unit_t é 0-based: log da v5.12.0 dizia "ADC1_CH4", o canal
       certo sempre foi ADC2_CH4/GPIO53). Docs: POWER.md §BAT.2.
-- [ ] **BAT.1**: calibração da curva/fator do divisor contra multímetro +
-      autonomia por degrau na bateria (docs/POWER.md §BAT.1).
+      ✅ VALIDADO EM HARDWARE 2026-10-12 (13ª rodada): salto de
+      +277/+203 mV detecta o carregador no reconnect ("carregando" no
+      log); repouso em "bateria" estável. Fluxo completo de
+      "assentando" segue sem observação de campo (na bateria não há
+      serial — v5.14.0 resolve com a linha ao vivo no Config→Sistema).
+- [x] **BAT.1a (v5.14.0, 2026-10-12)**: âncoras mín/máx APRENDIDAS em
+      campo e persistidas no NVS (ns `batt`) — remapeiam a curva p/ os
+      extremos reais da célula (campo: 4156 mV em carga vs 3.9 V no
+      multímetro ao despluguar); vmin só perto do vazio (pct ≤ 30),
+      vmax só no topo da carga; guardas de faixa/vão/histerese; botão
+      "Zerar calibração da bateria"; sufixo de estado na status bar
+      (`90%+`/`90%~`) e linha Bateria ao vivo a cada 4 s = teste de
+      bateria SEM serial. Teste de host G–K. Docs: POWER.md §BAT.1a.
+- [ ] **BAT.1b**: refinar a FORMA da curva (`s_curve`) contra multímetro
+      + autonomia por degrau na bateria (âncoras já corrigem extremos;
+      procedimento sem serial em POWER.md §BAT.1a item 4).
+
+### UI de campo — fixes da 13ª rodada (v5.14.0)
+- [x] Gesto de voltar vs. Config: Settings opta OUT do back-swipe (a
+      sidebar de abas começa em x≈8 px e a tira, no topo do hit-test,
+      comia os cliques) + tira 18→10 px (edição de campo adotada; o
+      gesto exige arrasto >36 px, então não perde função). Regra e
+      tabela em docs/UI.md §opt-out.
+- [x] Botões de texto com largura intrínseca: rótulo dentro de
+      HorizontalLayout c/ `Theme.btn-px` (13 px) → preferred/min = texto
+      + 26 px; fim do corte de rótulo por `width:` curto ("violeta"/
+      "traço" @76 px). Linhas que devem preencher a tela ganham
+      `horizontal-stretch: 1` nos botões; filhos de VerticalLayout
+      esticam sem width ("Teste som", "Zerar calibração", "Abrir tela
+      de redes" — edição de campo do usuário adotada e generalizada).
+      Renders `settings`/`settings2` do harness auditam as duas abas.
+- [x] Telemetria de bateria sem serial: linha Bateria do Config→Sistema
+      ao vivo a cada 4 s (mV/estado/âncoras) + sufixo de estado na
+      status bar (`90%+` carregando, `90%~` assentando).
 
 ### KB-ALT — teclado USB sem VBUS na bateria (futuro, estudo em USB.md)
 - [ ] USB-A host NÃO tem VBUS na bateria (USB5V_IN = só entrada externa,

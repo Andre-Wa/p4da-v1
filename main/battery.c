@@ -1,6 +1,7 @@
 /**
- * battery.c — BAT.0 (v5.12.0) + BAT.2 (v5.13.0): bateria via divisor da
- * folha 03, com máquina de estados de carga/assentamento.
+ * battery.c — BAT.0 (v5.12.0) + BAT.2 (v5.13.0) + BAT.1a (v5.14.0):
+ * bateria via divisor da folha 03, máquina de estados de carga/assentamento
+ * e âncoras mín/máx aprendidas em campo (remapeamento da curva).
  *
  * Topologia (esquemático GUITION JC4880P443C_I_W, folha 03 "Expand IO"):
  *   BAT+ --R52 68K--+--R57 100K--GND   (C61 10nF no nó)
@@ -24,6 +25,17 @@
  *    sanfona 97→94→97 relatado ao tirar/recolocar o carregador. Durante a
  *    carga o % segue a tensão de terminal (lê alto: é a física do CC-CV,
  *    ver docs/POWER.md §BAT.2).
+ *  - BAT.1a (v5.14.0): ÂNCORAS aprendidas em campo. A curva s_curve é uma
+ *    LiPo genérica 3300-4200 mV; a célula real pode cortar mais alto
+ *    (relaxo pós-carga medido em campo: 4156 mV em carga -> 3.9 V no
+ *    multímetro, célula 14500 com resistência interna alta). O módulo
+ *    aprende sozinho: vmin = menor tensão vista PERTO do vazio (estado
+ *    bateria, pct <= 30), vmax = maior tensão vista em CARGA; persiste no
+ *    NVS (ns "batt") e remapeia a curva padrão p/ o domínio [vmin,vmax]
+ *    (std_mv). Botão "Zerar calibração da bateria" no Config→Sistema
+ *    restaura os padrões. Procedimento de campo sem serial: usar até
+ *    desligar + carregar até o fim; as âncoras aparecem na tela e no log.
+ *    Detalhes: docs/POWER.md §BAT.1.
  *
  * Por que task e não leitura sob demanda: a 1ª conversão oneshot após
  * acordar o ADC leva ~ms e o Slint roda em task de evento; manter o poll
@@ -38,6 +50,7 @@
 #include "board_config.h"
 
 #include "esp_log.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_adc/adc_oneshot.h"
@@ -48,6 +61,14 @@
 #include <string.h>
 
 static const char *TAG = "battery";
+
+/* Em host test (BATTERY_UNIT_TEST) as funções de lógica pura viram não-
+ * static p/ tools/hosttest/host_batt_test.c injetar perfis de tensão. */
+#ifdef BATTERY_UNIT_TEST
+#define BATT_VIS /* visível p/ tools/hosttest/host_batt_test.c */
+#else
+#define BATT_VIS static
+#endif
 
 /* statics no topo (regra de REGRESSOES_BUILD.md: uso-antes-definição e
  * escopo já custaram bugs aqui). */
@@ -68,6 +89,9 @@ static int s_pre_chg_mv = -1;      /* ema ao entrar em carga (p/ sag) */
 static int s_settle_peak = -1;     /* pico de ema na sessão de carga */
 static int s_settle_polls = 0;     /* polls em ASSENTANDO */
 static TaskHandle_t s_task = NULL;
+/* BAT.1a: âncoras do remapeamento da curva (aprendidas em campo, NVS). */
+static int s_vmin = 3300;          /* = extremo 0% da s_curve (padrão) */
+static int s_vmax = 4200;          /* = extremo 100% da s_curve (padrão) */
 
 #define BATT_SAMPLES     8
 #define BATT_POLL_MS     4000
@@ -84,44 +108,140 @@ static TaskHandle_t s_task = NULL;
 #define BATT_SETTLE_POLLS  150     /* 10 min máx. segurando o % */
 #define BATT_SETTLE_SAG_MV 90      /* sag do pico que encerra o assentamento */
 
+/* BAT.1a: âncoras aprendidas (domínio da s_curve = 3300-4200 mV). */
+#define BATT_STD_MV_MIN    3300    /* extremo 0% da curva padrão */
+#define BATT_STD_MV_MAX    4200    /* extremo 100% da curva padrão */
+#define BATT_ANCH_ABS_MIN  2800    /* vmin abaixo disso = leitura inválida */
+#define BATT_ANCH_ABS_MAX  4400    /* vmax acima disso = leitura inválida */
+#define BATT_ANCH_SPAN     600     /* vão mín. entre âncoras (sanidade) */
+#define BATT_LEARN_HYST    15      /* só move âncora além desta margem */
+#define BATT_LEARN_PCT     30      /* vmin só aprende com pct <= 30% */
+#define BATT_NVS_NS        "batt"  /* chaves i32: "vmin", "vmax" */
+
 /* Estados (s_state). Exposos p/ UI/log como texto via battery_state_str(). */
 #define BSTAT_BATTERY   0   /* na bateria: % segue a curva */
 #define BSTAT_CHARGING  1   /* salto detectado: % segue a tensão de carga */
 #define BSTAT_SETTLING  2   /* carregador saiu: % congelado até assentar */
 
 /* Curva LiPo típica SEM carga (mV -> %), piecewise-linear, descendente.
- * Aproximação de 1ª rodada; calibrar contra multímetro em BAT.1
- * (docs/POWER.md). Durante carga a tensão lê alto de propósito. */
+ * Domínio padrão 3300-4200 mV; BAT.1a remapeia a entrada p/ este domínio
+ * usando as âncoras aprendidas (std_mv) — a FORMA da curva segue a LiPo
+ * genérica, os EXTREMOS se ajustam à célula real. Refino de forma contra
+ * multímetro continua em BAT.1b (docs/POWER.md). Durante carga a tensão
+ * lê alto de propósito. */
 static const struct { int mv; int pct; } s_curve[] = {
     { 4200, 100 }, { 4100, 92 }, { 4000, 82 }, { 3900, 68 }, { 3800, 53 },
     { 3700, 38 },  { 3600, 24 }, { 3500, 12 }, { 3400, 5 },  { 3300, 0 },
 };
 #define CURVE_N ((int)(sizeof(s_curve) / sizeof(s_curve[0])))
 
-static int curve_pct(int mv)
+/* BAT.1a: mV real -> domínio padrão da curva (identidade c/ âncoras de
+ * fábrica). Ex.: âncoras 3450-4260 e entrada 3825 -> 3300 + (3825-3450)
+ * * 900/810 = 3716. */
+static int std_mv(int bmv)
 {
-    if (mv >= s_curve[0].mv) return 100;
-    if (mv <= s_curve[CURVE_N - 1].mv) return 0;
+    if (s_vmin == BATT_STD_MV_MIN && s_vmax == BATT_STD_MV_MAX) return bmv;
+    return BATT_STD_MV_MIN + (bmv - s_vmin) * (BATT_STD_MV_MAX - BATT_STD_MV_MIN)
+                             / (s_vmax - s_vmin);
+}
+
+BATT_VIS int curve_pct(int mv)
+{
+    const int smv = std_mv(mv);
+    if (smv >= s_curve[0].mv) return 100;
+    if (smv <= s_curve[CURVE_N - 1].mv) return 0;
     for (int i = 0; i + 1 < CURVE_N; i++) {
-        if (mv <= s_curve[i].mv && mv >= s_curve[i + 1].mv) {
+        if (smv <= s_curve[i].mv && smv >= s_curve[i + 1].mv) {
             const int span = s_curve[i].mv - s_curve[i + 1].mv;
             const int dp = s_curve[i].pct - s_curve[i + 1].pct;
-            return s_curve[i + 1].pct + (mv - s_curve[i + 1].mv) * dp / span;
+            return s_curve[i + 1].pct + (smv - s_curve[i + 1].mv) * dp / span;
         }
     }
     return 0;
 }
 
+/* ---- BAT.1a: âncoras aprendidas (NVS ns "batt", chaves vmin/vmax) ---- */
+
+static void calib_persist(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(BATT_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_i32(h, "vmin", s_vmin);
+    nvs_set_i32(h, "vmax", s_vmax);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+BATT_VIS void battery_calib_load(void)
+{
+    s_vmin = BATT_STD_MV_MIN;
+    s_vmax = BATT_STD_MV_MAX;
+    nvs_handle_t h;
+    if (nvs_open(BATT_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        int32_t v;
+        if (nvs_get_i32(h, "vmin", &v) == ESP_OK &&
+            v >= BATT_ANCH_ABS_MIN && v <= 3700) s_vmin = v;
+        if (nvs_get_i32(h, "vmax", &v) == ESP_OK &&
+            v >= 3900 && v <= BATT_ANCH_ABS_MAX) s_vmax = v;
+        nvs_close(h);
+    }
+    if (s_vmax - s_vmin < BATT_ANCH_SPAN) {   /* par inválido: de fábrica */
+        s_vmin = BATT_STD_MV_MIN;
+        s_vmax = BATT_STD_MV_MAX;
+    }
+    if (s_vmin != BATT_STD_MV_MIN || s_vmax != BATT_STD_MV_MAX) {
+        ESP_LOGI(TAG, "âncoras da bateria (NVS): %d-%d mV", s_vmin, s_vmax);
+    }
+}
+
+void battery_reset_calibration(void)
+{
+    s_vmin = BATT_STD_MV_MIN;
+    s_vmax = BATT_STD_MV_MAX;
+    calib_persist();
+    ESP_LOGI(TAG, "âncoras resetadas p/ padrão da curva: %d-%d mV",
+             s_vmin, s_vmax);
+}
+
+int battery_anchor_min(void) { return s_vmin; }
+int battery_anchor_max(void) { return s_vmax; }
+
+/* Aprende com a leitura do poll (chamado pela task APÓS battery_ingest,
+ * pois usa s_state/s_pct já atualizados). Pura sob BATTERY_UNIT_TEST:
+ * o harness chama direto. Regras (docs/POWER.md §BAT.1):
+ *  - vmin: estado BATERIA e pct <= 30 (perto do vazio: é onde o corte
+ *    real acontece; fora disso um sag transitório de falante/tela
+ *    envenenaria a âncora). Simétrico: célula que corta em 3.45 V
+ *    SOBE o vmin de fábrica — senão o PDA "morre aos 15%".
+ *  - vmax: estado CARREGANDO e acima do atual (só sobe: topo de carga
+ *    CC-CV; meia-carga não move a âncora porque exige > vmax+15).
+ *  - Sanidade: [2800,4400] absoluto e vão >= 600 mV; histerese 15 mV
+ *    limita escritas NVS (cada movimento > 15 mV grava; bounded). */
+BATT_VIS void battery_learn(int bmv)
+{
+    if (s_state == BSTAT_CHARGING) {
+        if (bmv > BATT_ANCH_ABS_MAX) return;              /* leitura inválida */
+        if (bmv > s_vmax + BATT_LEARN_HYST && bmv - s_vmin >= BATT_ANCH_SPAN) {
+            s_vmax = bmv;
+            calib_persist();
+            ESP_LOGI(TAG, "âncora máx aprendida em carga: %d mV", bmv);
+        }
+    } else if (s_state == BSTAT_BATTERY && s_pct >= 0 && s_pct <= BATT_LEARN_PCT) {
+        if (bmv < BATT_ANCH_ABS_MIN) return;              /* leitura inválida */
+        const int d = bmv - s_vmin;
+        if ((d < 0 ? -d : d) > BATT_LEARN_HYST && s_vmax - bmv >= BATT_ANCH_SPAN) {
+            s_vmin = bmv;
+            calib_persist();
+            ESP_LOGI(TAG, "âncora mín aprendida perto do vazio: %d mV (pct %d)",
+                     bmv, s_pct);
+        }
+    }
+}
+
 /* ---- BAT.2: máquina de estados carga/assentamento ----
  * Entra com a tensão JA compensada pelo divisor (mV de bateria).
- * Única dona de s_ema_mv/s_pct/s_state. Em host test (BATTERY_UNIT_TEST)
- * é não-static p/ o harness injetar perfis de tensão direto. */
-#ifdef BATTERY_UNIT_TEST
-#define BATT_VIS /* visível p/ tools/hosttest/host_batt_test.c */
-#else
-#define BATT_VIS static
-#endif
-
+ * Única dona de s_ema_mv/s_pct/s_state. Não-static sob BATTERY_UNIT_TEST
+ * (BATT_VIS no topo) p/ o harness injetar perfis de tensão direto. */
 BATT_VIS void battery_ingest(int bmv)
 {
     const int delta = (s_prev_mv < 0) ? 0 : bmv - s_prev_mv;
@@ -273,6 +393,7 @@ static void battery_task(void *arg)
                 s_bad = 0;
                 const bool first = !s_ready;
                 battery_ingest(bmv);
+                battery_learn(bmv);   /* BAT.1a: usa s_state/s_pct do ingest */
                 s_node_mv = nmv;
                 s_batt_mv = s_ema_mv;
                 if (first) {
@@ -319,6 +440,7 @@ esp_err_t battery_start(void)
     }
     s_calibrated = cali_init(BOARD_BATT_ADC_UNIT, BOARD_BATT_ADC_CHANNEL,
                              ADC_ATTEN_DB_12, &s_cali);
+    battery_calib_load();   /* BAT.1a: âncoras aprendidas em campo (NVS) */
 
     if (xTaskCreate(battery_task, "battery", 4096, NULL, 3, &s_task) != pdPASS) {
         ESP_LOGE(TAG, "sem RAM p/ task battery");
@@ -340,8 +462,13 @@ bool battery_calibrated(void) { return s_calibrated; }
 void battery_status_str(char *buf, int sz)
 {
     if (!buf || sz <= 0) return;
-    if (!s_ready) snprintf(buf, sz, "--");
-    else snprintf(buf, sz, "%d%%", s_pct);
+    if (!s_ready) { snprintf(buf, sz, "--"); return; }
+    /* BAT.1a: sufixo de estado p/ leitura SEM serial (na bateria o log
+     * USB não existe): "+" = carregando, "~" = assentando, nada = bateria.
+     * Ambos ASCII — sem risco de glifo fora do charset da PDA Mono. */
+    if (s_state == BSTAT_CHARGING)       snprintf(buf, sz, "%d%%+", s_pct);
+    else if (s_state == BSTAT_SETTLING)  snprintf(buf, sz, "%d%%~", s_pct);
+    else                                 snprintf(buf, sz, "%d%%", s_pct);
 }
 
 void battery_describe(char *buf, int sz)
@@ -354,9 +481,11 @@ void battery_describe(char *buf, int sz)
         return;
     }
     /* adc_unit_t é 0-based: imprime unit+1 (v5.12.0 dizia "ADC1" por bug
-     * de exibição; o canal certo sempre foi ADC2_CH4/GPIO53). */
-    snprintf(buf, sz, "%d%% (%d mV, ADC%d_CH%d/GPIO%d, %s%s%s)",
-             s_pct, s_batt_mv, (int)BOARD_BATT_ADC_UNIT + 1,
+     * de exibição; o canal certo sempre foi ADC2_CH4/GPIO53).
+     * BAT.1a: âncoras no meio p/ coleta de campo sem serial. */
+    snprintf(buf, sz, "%d%% (%d mV, ânc %d-%d mV, ADC%d_CH%d/GPIO%d, %s%s%s)",
+             s_pct, s_batt_mv, s_vmin, s_vmax,
+             (int)BOARD_BATT_ADC_UNIT + 1,
              (int)BOARD_BATT_ADC_CHANNEL, (int)BOARD_BATT_SENSE_GPIO,
              s_calibrated ? "cal. eFuse" : "fallback linear",
              s_state == BSTAT_BATTERY ? "" : ", ",

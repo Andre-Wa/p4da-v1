@@ -253,7 +253,11 @@ static void update_clock(void)
     g_ui->set_status_pwr(slint::SharedString(pwr));
 
     /* BAT.0: status bar de bateria a cada ~4 s, só lendo caches da task
-     * "battery" (nenhum I2C/ADC no caminho do tick do Slint). */
+     * "battery" (nenhum I2C/ADC no caminho do tick do Slint).
+     * v5.14.0: a linha do Config→Sistema também refresca aqui — com a
+     * placa NA BATERIA não há serial (o USB-C que loga é o que carrega),
+     * então o teste de campo de BAT.1/BAT.2 é VISUAL: mV/estado/âncoras
+     * ao vivo na tela. */
     static int64_t s_batt_tick = -10;
     const int64_t now_s = esp_timer_get_time() / 1000000LL;
     if (now_s - s_batt_tick >= 4) {
@@ -261,6 +265,9 @@ static void update_clock(void)
         char bstat[16];
         battery_status_str(bstat, sizeof(bstat));
         g_ui->set_status_batt(slint::SharedString(bstat));
+        char bdesc[128];
+        battery_describe(bdesc, sizeof(bdesc));
+        g_ui->set_cfg_batt_info(slint::SharedString(bdesc));
     }
 }
 
@@ -1908,6 +1915,13 @@ extern "C" void app_main(void)
     ui->on_cfg_reset([]() {
         activity();
         pda_config_reset_defaults();
+        push_settings_to_ui();
+    });
+    /* BAT.1a (v5.14.0): zera as âncoras aprendidas (NVS ns "batt") e
+     * restaura o domínio padrão da curva (3300-4200 mV). */
+    ui->on_cfg_batt_reset([]() {
+        activity();
+        battery_reset_calibration();
         push_settings_to_ui();
     });
     ui->on_cfg_sleep_now([]() {

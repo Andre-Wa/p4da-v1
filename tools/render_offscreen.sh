@@ -3,8 +3,9 @@
 #
 # Compila main/ui/app_ui.slint com o slint-compiler 1.12.1 em modo
 # `embed-for-software-renderer`, linka com o Slint-cpp de Linux e renderiza
-# os 8 modos do harness (reading, reading2, edit, prompt, panel, paneldrag,
-# coltest, fontpitch) para PNG na raiz do repo.
+# os modos do harness (reading, reading2, edit, networks, music, prompt,
+# panel, paneldrag, settings, settings2, coltest, fontpitch) para PNG na
+# raiz do repo.
 #
 # Pré-requisitos no host (Linux x86_64):
 #   - slint-compiler 1.12.1   (release do GitHub, binário único)
@@ -47,7 +48,7 @@ echo "== render =="
 # coltest/fontpitch = sondas M4.13 do pitch de glifo (drift do cursor-bloco):
 # coltest compara overlay vetorial vs glifo in-flow na col 43; fontpitch mede
 # o avanço real por (face,tamanho) com 24 'M' idênticos por estilo.
-for mode in reading reading2 edit networks music prompt panel paneldrag coltest fontpitch; do
+for mode in reading reading2 edit networks music prompt panel paneldrag settings settings2 coltest fontpitch; do
     ./harness "$mode"
     python3 - "$mode" "$REPO" <<'PY'
 import sys

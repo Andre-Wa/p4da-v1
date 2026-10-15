@@ -83,6 +83,13 @@ export global Theme {
     in property <length> status-h: 34px;
     in property <length> btn-h: 44px;
     in property <length> btn-h-sm: 39px;
+    // v5.14.0: padding horizontal dos botões de texto. Com o texto dentro
+    // de um HorizontalLayout com este padding, o botão ganha largura
+    // intrínseca (preferred/min) = texto + 2*btn-px — rótulo nunca mais
+    // é cortado por `width:` fixo curto (relato de campo v5.13.0:
+    // "violeta"/"traço" @ 76px). Largura fixa continua válida como
+    // MÍNIMO visual quando maior que a intrínseca.
+    in property <length> btn-px: 13px;
     in property <length> row-h: 48px;
     in property <length> line-h: 28px;   // editor (espelha main.cpp ED_LINE_H)
 }
