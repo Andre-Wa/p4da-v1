@@ -41,12 +41,19 @@
 ## Regras de threading (não negociáveis)
 
 1. **UI nunca bloqueia**: toda I/O de disco acontece em `std::thread`
-   destacada e o resultado volta via `slint::invoke_from_event_loop`.
+   destacada e o resultado volta via `ui_post()` (UI-LOOP-GATE, v5.16.0 —
+   `slint::invoke_from_event_loop` direto ANTES do loop asserta
+   `xTaskToNotify==NULL`; evidência e mecanismo em `main/ui_gate.h`).
 2. **VM Lua é single-thread**: execuções serializadas por `g_lua_mtx`
    (uma de cada vez); scripts rodam em thread própria para não travar a UI.
 3. **Mutação de propriedades Slint só no event loop** (regra 1 é o mecanismo).
 4. `power_mgmt_activity()` deve ser chamado em todo handler de UI/teclado —
    é o que segura os degraus de energia.
+5. **Callback de driver NUNCA invoca direto na UI** (UAC/HID/Wi-Fi/Lua):
+   sempre `ui_post()`. Antes do event loop o gate acumula (FIFO) e a task
+   `ui_gate` dá flush na 1ª iteração — crash da 15ª rodada foi um evento
+   UAC (device conectado no boot pós-hibernação) chamando invoke com a
+   task estática do backend Slint ainda NULL.
 
 ## Proteção da VM Lua
 

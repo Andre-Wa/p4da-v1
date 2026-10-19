@@ -747,12 +747,82 @@ toda a interface".
       de 2 polls (alívio de carga de dim/beep não fantasia mais de
       "+"); "Zerar calibração" religa o % na hora; log serial imprime
       as duas EMAs. Teste de host L–O. Docs: POWER.md §BAT.1c.
-- [ ] BAT.1c VALIDAÇÃO HW (15ª rodada): trocar brilho e ligar/desligar
-      Wi-Fi em uso: % oscila ≤±2 pts e devagar; nenhum "+" fantasma ao
-      dimerizar/beep terminar; descarga longa continua coerente.
+- [x] BAT.1c VALIDAÇÃO HW ✅ 15ª rodada (2026-10-17, relatório "todos os
+      testes funcionaram"): log em carga mostra o mecanismo completo —
+      `salto candidato +262 mV → confirmando no próximo poll → carregador
+      confirmado: +269 mV sustentado`; % estável em 98% por ~18 min entre
+      plug/unplug; EMA lenta convergindo (4014→4173 mV); "assentando"
+      segurando o % como projetado (leitura: POWER.md §Plano, observações
+      da 15ª rodada).
 - [ ] **BAT.1b**: refinar a FORMA da curva (`s_curve`) contra multímetro
       + autonomia por degrau na bateria (âncoras já corrigem extremos;
       procedimento sem serial em POWER.md §BAT.1a item 4).
+
+### UI-LOOP-GATE — crash do boot pós-hibernação (v5.16.0, 2026-10-17)
+- [x] **Causa raiz do crash reproduzido na 15ª rodada** (`assert failed:
+      vTaskGenericNotifyGiveFromISR tasks.c:6171 (xTaskToNotify)` no boot
+      pós-hibernação a partir da Config): `slint::invoke_from_event_loop`
+      ANTES do `run_event_loop` notifica a task estática do backend ainda
+      NULL — slint-esp.cpp v1.12.1: `task = {}` (L336), atribuída só na 1ª
+      linha do loop (L132), notify incondicional (L332); `configASSERT(
+      xTaskToNotify)` conferido na fonte pinada do IDF v5.5.1. Gatilho de
+      campo: device UAC já ligado no boot (H3S alimentado pelo USB5V_IN com
+      a placa em carga no USB-C) → evt_task → push_mus_ui no bring-up.
+      HID connect, evento Wi-Fi e print do Lua caem no MESMO buraco; o
+      M4.15.3 só tinha tamponado o caminho do restore de sessão (assert
+      idêntico em 2026-10-05).
+- [x] Fix estrutural: `main/ui_gate.h` (UiGate: antes do loop acumula FIFO,
+      depois encaminha) + `ui_post()` substituindo os 18 invokes do
+      main.cpp + task `ui_gate` (flush 100 ms após a criação da ui_loop).
+      O restore de sessão deixou de depender da corrida de prioridade.
+- [x] Teste de host A–G (`tools/hosttest/host_uigate_test.cpp`: ui_gate.h
+      REAL + invoker mock): acumular, FIFO, flush idempotente, post direto
+      pós-loop, concorrência sem perda, post aninhado, cenário da 15ª rodada.
+- [x] session.txt: `note=` só é gravado com app=noteedit (na 15ª rodada
+      `app=settings note=config/system.lua` leu-se como "hibernar gravou a
+      TELA de config como nota" — era a última nota aberta no editor, que o
+      restore nem usa nesse ramo).
+- [ ] VALIDAÇÃO HW (16ª rodada): hibernar da Config com H3S (ou teclado)
+      plugado no USB-A e placa em carga no USB-C → boot restaura a Config
+      SEM assert; serial pode mostrar `ui-gate: N evento(s) do bring-up
+      aplicado(s) no loop`; hibernar da Config loga `sessão salva:
+      app=settings` (sem note=); regression: música/beep/teclado normais.
+
+### Plano de conclusão — BATERIA e SOM (definido 2026-10-17, pedido da 15ª rodada)
+Ordenação em nível de milestone; detalhe, aceites e riscos nos donos:
+**docs/POWER.md §Plano de conclusão da bateria** e **docs/AUDIO.md §2**.
+
+Bateria (resta após BAT.0/1a/1c/2 validados):
+1. **BAT.2b** — debounce de transições: unplug confirmado em 2 polls (flap
+   `carregador saiu/de volta` observado na 15ª rodada, t=714612/718613) e
+   saída de "assentando" adiantada por convergência das EMAs. Teste de host
+   com a série EXATA do log de campo.
+2. **BAT.1b** — FORMA da curva vs multímetro (única fase que depende de
+   coleta do usuário; procedimento sem serial já documentado).
+3. **BAT.3** — autonomia estimada: perfis de corrente por estado + delta
+   Wi-Fi/beep/PA, integrador de mAh no NVS, "≈Xh" na linha ao vivo.
+4. **BAT.4** — proteção de bateria crítica: 15% toast, 8% força DIM, 4%
+   hibernate de emergência com sessão salva (mesmo caminho do manual).
+5. **BAT.5** — saúde/histórico (opcional): anel diário mín/máx + ciclos
+   estimados no NVS.
+
+Som (falante vivo; hoje música só USB e falante só beep):
+1. **SOM.1** — player WAV local no I2S (parser compartilhado `wav_parse`,
+   task `spk_play`, beep × música no mesmo canal).
+2. **SOM.2** — seletor de saída interno|UAC|auto (M5c.2: `audio.out` no
+   system.lua, `audio_route`, migração de faixa no hot-plug; beep SEMPRE
+   interno — decisão registrada em AUDIO.md).
+3. **SOM.3** — volume local real (slider persistido + teclas de mídia no
+   destino local + beep seguindo o mesmo knob).
+4. **SOM.4** — MP3 + playlists (M5b: decoder decidido por teste de host
+   ANTES de integrar; abstração `audio_sink`; .m3u + repetir/aleatório).
+5. **SOM.5** — energia × áudio (corrente do PA medida, standby com música,
+   hibernate = stop limpo) — alimenta o BAT.3.
+6. **SOM.6** — confortos (sleep timer, audiobook, gapless) — só após 1–5.
+
+Sugestão de intercalação (usuário escolhe a cada rodada): BAT.2b é pequena
+e host-testable → embarca junto com SOM.1; SOM.2 depende de SOM.1; BAT.1b
+espera os pares de multímetro; BAT.3/4 paralelizam com SOM.4/5.
 
 ### Wi-Fi — diagnóstico de desconexão + recuperação de espera (v5.15.0)
 - [x] Incidente da 14ª rodada explicado pelo log: AP instável por
@@ -772,10 +842,10 @@ toda a interface".
       montavam wifi_config_t separados; só o manual levava pmf.capable
       — deriva eliminada; no IDF 5.5 o campo é deprecado, mas caminhos
       idênticos são a regra).
-- [ ] VALIDAÇÃO HW (15ª rodada): derrubar/religar o AP por ~2 min com o
-      PDA ocioso: `nenhuma das N rede(s) salva(s) presente no scan —
-      nova varredura em 120 s` e reconexão SOZINHO quando o AP voltar;
-      reasons nomeados no log de qualquer desconexão.
+- [x] VALIDAÇÃO HW ✅ 15ª rodada (2026-10-17, relatório "todos os testes
+      funcionaram"): sem nova ocorrência do modo-espera-permanente; boot
+      pós-hibernação lê `wifi.lua: 2 rede(s) salva(s) auto=1` e segue o
+      fluxo novo.
 
 ### UI de campo — fixes da 13ª rodada (v5.14.0)
 - [x] Gesto de voltar vs. Config: Settings opta OUT do back-swipe (a

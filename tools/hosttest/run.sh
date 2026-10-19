@@ -31,3 +31,11 @@ gcc -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
 
 echo "--- rodando /tmp/batt_bin ---"
 /tmp/batt_bin
+
+# ---- UI-LOOP-GATE (v5.16.0): ui_gate.h real, invoker mock (crash da 15ª
+# rodada: invoke_from_event_loop antes do loop = assert xTaskToNotify) ----
+g++ -std=c++17 -Wall -Wextra -pthread -I main \
+    tools/hosttest/host_uigate_test.cpp -o /tmp/uigate_bin
+
+echo "--- rodando /tmp/uigate_bin ---"
+/tmp/uigate_bin

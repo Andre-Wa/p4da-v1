@@ -310,6 +310,66 @@ religa o % na curva nova no 1º poll).
 3. Anotar o comportamento em carga: durante CC/CV a leitura lê alto de
    propósito; "100%" só é confiável em repouso pós-carga.
 
+## Plano de conclusão da bateria (definido 2026-10-17, v5.16.0)
+
+Pedido do usuário na 15ª rodada: "um plano para terminar a implementação
+da bateria". Ordem de implementação = ordem das fases; cada fase valida em
+HW antes da seguinte. O que já está FEITO/validado: BAT.0 (leitura real),
+BAT.2 (máquina de estados), BAT.1a (âncoras aprendidas), BAT.1c (% estável
+sob carga — ✅ 15ª rodada).
+
+### Observações de campo da 15ª rodada (log do usuário, v5.15.0 em carga)
+- BAT.1c funcionando como projetado: `salto candidato +262 mV → confirmando
+  no próximo poll → carregador confirmado: +269 mV sustentado` (o alívio de
+  carga não fantasiou de "+"); % travado em 98% durante todo o ciclo
+  plug→unplug→assentando; EMA lenta convergindo visivelmente (4014→4173).
+- "Assentando" longo NÃO é bug: a saída exige sag ≥ 90 mV do pico
+  (`BATT_SETTLE_SAG_MV`) OU 150 polls/10 min (`BATT_SETTLE_POLLS`) OU voltar
+  ao nível pré-carga +15 mV. No log, o sag era 83 mV aos 8 min → a saída
+  viria pelo teto de 10 min com snap honesto p/ a curva (~92% em 4096 mV).
+  Bateria cheia de verdade segura ~4,1 V em repouso: o snap pós-carga é a
+  leitura mais confiável do ciclo.
+- Flap observado: `carregador saiu (4175 mV)` → 4 s depois `carregador de
+  volta` (t=714612/718613). A queda CC/CV ou um degrau de carga de ≥25 mV
+  num poll único (`BATT_DROP_MV`) já derruba o estado. Cosmético (o % seguiu
+  segurado), mas vira BAT.2b abaixo.
+
+### Fases
+1. **BAT.2b — debounce das transições** (pequena, entra junto da próxima
+   rodada de fixes): saída de carga confirmada em 2 polls (espelho da subida,
+   que já é confirmada); saída de "assentando" adiantada quando a EMA rápida
+   e a lenta convergem (|rápida−lenta| ≤ 5 mV por 3 polls) — o teto de 10 min
+   deixa de ser o caminho comum. Teste de host: novos casos no
+   `host_batt_test.c` com a série EXATA do log da 15ª rodada (o flap não
+   pode mais trocar de estado; a convergência encerra o assentamento cedo).
+2. **BAT.1b — FORMA da curva** (já especificada acima neste arquivo):
+   pares multímetro × linha ao vivo do Config→Sistema em repouso a cada
+   ~10% (procedimento sem serial no §BAT.1a item 4); ajustar `s_curve`
+   piecewise-linear p/ a célula 14500 do usuário; conferir o fator do
+   divisor (~1,68). Sem os pares do usuário esta fase NÃO anda — é a única
+   fase do plano que depende de coleta dele.
+3. **BAT.3 — autonomia estimada**: perfis de corrente por estado de energia
+   (ACTIVE brilho X, DIM, OFF/standby, hibernate; deltas de Wi-Fi, beep e
+   PA tocando — medir em série com o multímetro, procedimento na §Plano de
+   medição); integrador de mAh consumidos no NVS (append a cada min);
+   "≈Xh restantes" na linha Bateria do Config→Sistema. Lógica pura do
+   integrador nasce com teste de host.
+4. **BAT.4 — proteção de bateria crítica**: avisos em degraus (15% toast;
+   8% força DIM + aviso; 4% salva sessão + hibernate de emergência antes do
+   brownout corromper SD/NVS). Máquina de limiares com histerese (não pode
+   oscilar aviso/normal em sag) + teste de host. Interage com POWER.md
+   §arquitetura em degraus: o hibernate de emergência usa o MESMO caminho
+   do hibernate manual (sessão + flag NVS).
+5. **BAT.5 — saúde/histórico (opcional, só se 1–4 validados)**: mín/máx
+   diários em anel NVS (30 dias), contagem estimada de ciclos (Ah
+   descarregado acumulado / capacidade nominal), linha "Saúde" no
+   Config→Sistema. Serve p/ detectar a degradação da 14500 de campo
+   (resistência interna alta já observada na 14ª rodada).
+
+Aceite geral do plano: ao fim de BAT.4, o PDA nunca desliga "seco" (sempre
+hiberna com sessão salva) e o usuário sabe, sem serial, o % real (curva
+calibrada), a autonomia estimada e o histórico de saúde.
+
 ## SD × light sleep: por que remontamos no wake
 
 Medido em hardware (2026-09-22): após `STANDBY`, qualquer I/O no cartão

@@ -25,6 +25,7 @@
 #include "audio_uac.h"
 #include "audio_i2s.h"
 #include "battery.h"
+#include "ui_gate.h"   /* UI-LOOP-GATE (v5.16.0) */
 #include "nvs_flash.h"
 
 #include "esp_log.h"
@@ -89,6 +90,26 @@ static const float ED_CHAR_W = 11.0f;
 
 static void activity(void) { power_mgmt_activity(); }
 
+/* ---- UI-LOOP-GATE (v5.16.0) ----
+ * Crash da 15ª rodada (boot pós-hibernação na Config com device UAC ligado):
+ * `assert failed: vTaskGenericNotifyGiveFromISR tasks.c:6171 (xTaskToNotify)`.
+ * Causa: slint::invoke_from_event_loop ANTES do run_event_loop notifica a
+ * task estática do backend ainda NULL — slint-esp.cpp v1.12.1: task={} (L336),
+ * atribuída só na 1ª linha do loop (L132), notify incondicional (L332);
+ * configASSERT(xTaskToNotify) no tasks.c do IDF v5.5.1. O M4.15.3 adiou só o
+ * restore de sessão; o buraco é estrutural (evt_task do UAC → push_mus_ui,
+ * HID connect, evento Wi-Fi, print do Lua — qualquer callback de driver
+ * durante o bring-up). ui_post() substitui o invoke NESTE ARQUIVO INTEIRO:
+ * antes do loop acumula (FIFO), depois encaminha. A task ui_gate dá flush
+ * 100 ms após a criação da ui_loop. Evidência e teste de host: ui_gate.h,
+ * tools/hosttest/host_uigate_test.cpp. */
+static void ui_invoke_real(std::function<void()> fn)
+{
+    slint::invoke_from_event_loop(std::move(fn));
+}
+static UiGate<void (*)(std::function<void()>)> g_ui_gate(&ui_invoke_real);
+static void ui_post(std::function<void()> fn) { g_ui_gate.post(std::move(fn)); }
+
 /* forward decls (ordem de definição vs uso) */
 static void refresh_notes_list(void);
 static void refresh_scripts_list(void);
@@ -138,7 +159,7 @@ static void log_line(const char *line, void *ctx)
 {
     (void)ctx;
     std::string s(line);
-    slint::invoke_from_event_loop([s]() {
+    ui_post([s]() {
         if (g_script_log) {
             g_script_log->push_back(slint::SharedString(s));
             while (g_script_log->row_count() > 200) g_script_log->erase(0);
@@ -164,7 +185,7 @@ static void apply_brightness_from_settings(void)
 
 static void settings_changed_by_lua(void)
 {
-    slint::invoke_from_event_loop([]() { apply_brightness_from_settings(); });
+    ui_post([]() { apply_brightness_from_settings(); });
 }
 
 /* ---------------- redes (M4b) ---------------- */
@@ -191,7 +212,7 @@ static void on_scan_done(const wifi_net_ap_t *aps, int count, void *ctx)
         infos->push_back(slint::SharedString(""));
         locked->push_back(false);
     }
-    slint::invoke_from_event_loop([ssids, infos, locked]() {
+    ui_post([ssids, infos, locked]() {
         g_ui->set_net_ssids(ssids);
         g_ui->set_net_infos(infos);
         g_ui->set_net_locked(locked);
@@ -224,7 +245,7 @@ extern "C" void wifi_net_on_event_ui(bool connected, int rssi)
     if (connected) snprintf(buf, sizeof(buf), "wifi %d dBm", rssi);
     else snprintf(buf, sizeof(buf), "wifi --");
     std::string s(buf);
-    slint::invoke_from_event_loop([s]() {
+    ui_post([s]() {
         g_ui->set_status_wifi(slint::SharedString(s));
         g_ui->set_cfg_wifi_info(slint::SharedString(
             wifi_net_connected() ? wifi_net_ssid() : "offline"));
@@ -719,7 +740,7 @@ static void ed_open_path_async(const std::string path, bool start_reading)
             log_line(buf, NULL);
             return;
         }
-        slint::invoke_from_event_loop([path, content, start_reading]() {
+        ui_post([path, content, start_reading]() {
             ed_load(path, content, false, start_reading);
         });
     });
@@ -864,7 +885,7 @@ static void list_dir_async(const std::string dir)
             names->push_back(slint::SharedString("internal"));
             isdir->push_back(true);
             icons->push_back(slint::SharedString(icon_kind_for("internal", true)));
-            slint::invoke_from_event_loop([names, isdir, icons, dir]() {
+            ui_post([names, isdir, icons, dir]() {
                 g_ui->set_file_entries(names);
                 g_ui->set_file_is_dir(isdir);
                 g_ui->set_file_kind(icons);
@@ -906,7 +927,7 @@ static void list_dir_async(const std::string dir)
             icons->push_back(slint::SharedString(""));
         }
 
-        slint::invoke_from_event_loop([names, isdir, icons, dir]() {
+        ui_post([names, isdir, icons, dir]() {
             g_ui->set_file_entries(names);
             g_ui->set_file_is_dir(isdir);
             g_ui->set_file_kind(icons);
@@ -1073,7 +1094,7 @@ static void refresh_notes_list(void)
         for (auto &pr : *pairs) model->push_back(slint::SharedString(pr.first));
         if (pairs->empty())
             model->push_back(slint::SharedString("(nenhuma nota — toque em + Nova nota)"));
-        slint::invoke_from_event_loop([model, pairs]() {
+        ui_post([model, pairs]() {
             s_notes_real.clear();
             for (auto &pr : *pairs) s_notes_real.push_back(pr.second);
             g_ui->set_notes_list(model);
@@ -1105,7 +1126,7 @@ static void refresh_scripts_list(void)
         }
         if (count == 0)
             model->push_back(slint::SharedString("(sem .lua em scripts/)"));
-        slint::invoke_from_event_loop([model]() { g_ui->set_scripts_list(model); });
+        ui_post([model]() { g_ui->set_scripts_list(model); });
     });
 }
 
@@ -1169,7 +1190,7 @@ static void refresh_music_list(void)
             closedir(d);
         }
         std::sort(out.begin(), out.end());
-        slint::invoke_from_event_loop([out]() {
+        ui_post([out]() {
             g_mus_names = out;
             push_mus_ui();
         });
@@ -1195,8 +1216,14 @@ static void session_save(void *ctx)
     char path[160];
     pda_path(path, sizeof(path), ".state/session.txt");
     char buf[320];
-    snprintf(buf, sizeof(buf), "app=%s\nnote=%s\n",
-             s_session_app.c_str(), s_session_note.c_str());
+    /* v5.16.0 (15ª rodada): note= só pertence ao noteedit — o restore só o
+     * usa nesse ramo. Gravá-la junto de app=settings fez o campo ler o log
+     * como "hibernar gravou a TELA de config como nota". */
+    if (s_session_app == "noteedit" && !s_session_note.empty())
+        snprintf(buf, sizeof(buf), "app=%s\nnote=%s\n",
+                 s_session_app.c_str(), s_session_note.c_str());
+    else
+        snprintf(buf, sizeof(buf), "app=%s\n", s_session_app.c_str());
     storage_write_text_file(path, buf, strlen(buf));
     ESP_LOGI(TAG, "sessão salva: %s", buf);
 }
@@ -1303,6 +1330,19 @@ static void push_settings_to_ui(void)
 static slint::ComponentHandle<AppWindow> *s_ui_run_handle = nullptr;
 static esp_lcd_touch_handle_t s_touch_handle = nullptr;   /* M4.15: GT911 sleep no standby */
 
+/* UI-LOOP-GATE: a ui_loop (prio 5 > main 1) preempta na criação e configura
+ * a task estática do Slint na 1ª linha do run_event_loop; +100 ms depois o
+ * notify é seguro e o acumulado do bring-up entra no loop (ordem FIFO). */
+static void ui_gate_flush_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(100));
+    int n = g_ui_gate.flush();
+    if (n > 0)
+        ESP_LOGI(TAG, "ui-gate: %d evento(s) do bring-up aplicado(s) no loop", n);
+    vTaskDelete(NULL);
+}
+
 static void ui_run_task(void *arg)
 {
     (void)arg;
@@ -1370,7 +1410,7 @@ extern "C" void app_main(void)
         esp_timer_create_args_t bargs = {};
         bargs.callback = [](void *arg) {
             (void)arg;
-            slint::invoke_from_event_loop([]() {
+            ui_post([]() {
                 if (g_ui && g_ui->get_active_app() == AppState::Editor &&
                     !g_ed.reading) {
                     s_cursor_on = !s_cursor_on;
@@ -1678,7 +1718,7 @@ extern "C" void app_main(void)
     });
     /* M5a.2: media keys do consumer control (H3S/teclados c/ mídia). */
     usb_hid_keyboard_set_media_cb([](int act) {
-        slint::invoke_from_event_loop([act]() {
+        ui_post([act]() {
             switch (act) {
             case USB_MEDIA_PLAYPAUSE:
                 if (audio_uac_playing()) {
@@ -1937,7 +1977,7 @@ extern "C" void app_main(void)
         pda_config_save();
         s_qs_dirty = false;   /* save completo: brilho pendente do pulldown foi junto */
         ESP_LOGI(TAG, "[config] cursor salvo: %s", pda_settings()->cursor_style);
-        slint::invoke_from_event_loop([]() {
+        ui_post([]() {
             if (g_ui->get_active_app() == AppState::Editor) ed_push_ui(false);
         });
     });
@@ -1948,7 +1988,7 @@ extern "C" void app_main(void)
     audio_i2s_init();   /* M5c.1: falante local (ES8311+NS4150) */
     battery_start();    /* BAT.0 (v5.12.0): divisor de bateria GPIO53/ADC2_CH4 */
     audio_uac_set_event_cb([](void *) {
-        slint::invoke_from_event_loop([] { push_mus_ui(); });
+        ui_post([] { push_mus_ui(); });
     }, NULL);
     audio_uac_init();
     ui->on_cfg_set_accent([ui](slint::SharedString a) {
@@ -1995,7 +2035,7 @@ extern "C" void app_main(void)
 
     /* ---------- teclado USB ---------- */
     usb_hid_keyboard_init([](uint8_t ascii, uint8_t keycode, uint8_t /*mod*/) {
-        slint::invoke_from_event_loop([ascii, keycode]() {
+        ui_post([ascii, keycode]() {
             activity();
             if (g_ui->get_active_app() != AppState::Editor) return;
             if (g_ed.reading) return;
@@ -2017,7 +2057,7 @@ extern "C" void app_main(void)
     },
     [](bool connected) {
         ESP_LOGI(TAG, "teclado USB: %s", connected ? "conectado" : "ausente");
-        slint::invoke_from_event_loop([connected]() {
+        ui_post([connected]() {
             activity();
             g_hid_seen = g_hid_seen || connected;
             g_ui->set_has_keyboard(connected);
@@ -2052,7 +2092,7 @@ extern "C" void app_main(void)
             storage_remount_sd();
             usb_hid_keyboard_resume();
         }
-        slint::invoke_from_event_loop([]() {
+        ui_post([]() {
             update_clock();
             char buf[96];
             storage_sd_describe(buf, sizeof(buf));
@@ -2088,11 +2128,14 @@ extern "C" void app_main(void)
         ok = xTaskCreate(ui_run_task, "ui_loop", 32768, NULL, 5, NULL);
     }
     ESP_ERROR_CHECK(ok == pdPASS ? ESP_OK : ESP_FAIL);
-    /* M4.15.3: a task ui_loop existe (handle válido p/ notify); o lambda
-     * roda quando o event loop começar — seguro p/ invoke/ed_load. */
+    /* M4.15.3 + UI-LOOP-GATE (v5.16.0): o restore NÃO depende mais da
+     * corrida de prioridade p/ notify — vai p/ o pending do gate e roda na
+     * 1ª iteração do loop, junto com eventos de driver do bring-up. */
     if (s_rest_pending) {
-        slint::invoke_from_event_loop([]() { session_restore_apply(); });
+        ui_post([]() { session_restore_apply(); });
     }
+    if (xTaskCreate(ui_gate_flush_task, "ui_gate", 4096, NULL, 4, NULL) != pdPASS)
+        ESP_LOGE(TAG, "ui_gate: task de flush NÃO criada — eventos do bring-up ficam retidos");
     ESP_LOGI(TAG, "bring-up completo, entrando no loop do Slint");
     /* app_main retorna: a task main se encerra e libera os 16 KiB internos */
 }
