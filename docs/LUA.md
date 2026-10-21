@@ -60,6 +60,9 @@ limite de instruções e de memória; erro vira mensagem no console.
 | `pda.settings.get(k)` | num/bool/string | ver chaves acima |
 | `pda.settings.set(k, v)` | — | marca sujo; reaplica brilho na hora |
 | `pda.settings.save()` | bool | persiste em `config/system.lua` |
+| `pda.battery.set(min,max)` | bool | BAT.1d: âncoras manuais (mV); congela o aprendizado; persiste no NVS; ver `POWER.md §BAT.1d` |
+| `pda.battery.get()` | min,max,manual | três retornos |
+| `pda.battery.reset()` | — | = botão "Zerar calibração" (volta ao modo aprendido) |
 | `pda.fs.read(p)` | string \| nil,err | |
 | `pda.fs.write(p, s)` | bool \| nil,err | sobrescreve |
 | `pda.fs.append(p, s)` | bool | |
@@ -73,8 +76,10 @@ limite de instruções e de memória; erro vira mensagem no console.
 
 ### Exemplos
 
-Ver `sdcard-template/pda/scripts/`: `exemplo.lua` (tour pela API) e
-`organiza_notas.lua` (gera `notes/_indice.md`).
+Ver `sdcard-template/pda/scripts/`: `exemplo.lua` (tour pela API),
+`organiza_notas.lua` (gera `notes/_indice.md`) e `ancoras_teste.lua`
+(BAT.1d: fixa a janela de teste 3600-3700 mV do leitor de bateria —
+edite os dois números para testar outra janela, sem firmware novo).
 
 ### O que Lua NÃO faz (por decisão de escopo, ver roadmap)
 

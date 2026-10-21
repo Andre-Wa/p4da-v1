@@ -1,14 +1,16 @@
 /* host_batt_test.c — teste de host da máquina de estados BAT.2 + âncoras
- * BAT.1a + estabilidade BAT.1c (main/battery.c compilado com
- * -DBATTERY_UNIT_TEST).
+ * BAT.1a + estabilidade BAT.1c + âncoras manuais BAT.1d (main/battery.c
+ * compilado com -DBATTERY_UNIT_TEST).
  *
  * Injeta perfis de tensão de bateria (mV já compensados do divisor) em
  * battery_ingest() e verifica: % estável na bateria, detecção de carga
  * por salto COM CONFIRMAÇÃO (BAT.1c), congelamento do % ao desconectar
  * ("assentando"), retorno ao carregar de novo, snap honesto p/ curva,
  * rejeição de transiente de carga (sag+recuperação não vira "carregando"),
- * passo do % (queda/suave ritmada + banda morta) e religação imediata do
- * % no reset de calibração.
+ * passo do % (queda/suave ritmada + banda morta), religação imediata do
+ * % no reset de calibração e (P–T) a janela manual da BAT.1d: mapeamento
+ * 3600-3700 do teste do usuário, learn congelado, round-trip NVS da flag
+ * "man", reset que devolve o modo aprendido e validação da entrada.
  * Cenários espelham os logs de campo (v5.12 2026-10-12: 4079 mV bateria,
  * 4170-4174 mV carga; v5.14 14ª rodada: sag 2815 mV, dança ±50 mV com
  * brilho/Wi-Fi, âncoras aprendidas 2815-4200).
@@ -33,11 +35,13 @@ int curve_pct(int mv);               /* BAT.1a: idem */
 int battery_slow_mv(void);           /* BAT.1c: EMA lenta (só host) */
 
 /* ---- stub NVS mínimo (RAM) p/ battery.c no host ----
- * Só as chaves i32 "vmin"/"vmax" importam; o resto é no-op. O binário de
- * pda_config tem o SEU próprio stub em host_cfg_test.c (binários
- * separados no run.sh — sem colisão de símbolos). */
+ * Chaves i32 "vmin"/"vmax" + u8 "man" (BAT.1d); o resto é no-op. O
+ * binário de pda_config tem o SEU próprio stub em host_cfg_test.c
+ * (binários separados no run.sh — sem colisão de símbolos). */
 static int32_t s_nvs_vmin, s_nvs_vmax;
 static bool s_nvs_have_min, s_nvs_have_max;
+static uint8_t s_nvs_man;
+static bool s_nvs_have_man;
 esp_err_t nvs_open(const char *ns, nvs_open_mode_t m, nvs_handle_t *h)
 { (void)ns; (void)m; *h = 1; return ESP_OK; }
 esp_err_t nvs_set_i32(nvs_handle_t h, const char *k, int32_t v)
@@ -55,9 +59,17 @@ esp_err_t nvs_get_i32(nvs_handle_t h, const char *k, int32_t *v)
     return ESP_ERR_NVS_NOT_FOUND;
 }
 esp_err_t nvs_set_u8(nvs_handle_t h, const char *k, uint8_t v)
-{ (void)h; (void)k; (void)v; return ESP_OK; }
+{
+    (void)h;
+    if (!strcmp(k, "man")) { s_nvs_man = v; s_nvs_have_man = true; }
+    return ESP_OK;
+}
 esp_err_t nvs_get_u8(nvs_handle_t h, const char *k, uint8_t *v)
-{ (void)h; (void)k; (void)v; *v = 0; return ESP_ERR_NVS_NOT_FOUND; }
+{
+    (void)h;
+    if (!strcmp(k, "man") && s_nvs_have_man) { *v = s_nvs_man; return ESP_OK; }
+    return ESP_ERR_NVS_NOT_FOUND;
+}
 esp_err_t nvs_set_str(nvs_handle_t h, const char *k, const char *v)
 { (void)h; (void)k; (void)v; return ESP_OK; }
 esp_err_t nvs_get_str(nvs_handle_t h, const char *k, char *v, size_t *len)
@@ -362,7 +374,143 @@ int main(void)
               "O: pct instável pós-reset: %d != %d", battery_percent(), expect);
     }
 
+    /* ===== BAT.1d (v5.16.1): âncoras MANUAIS — seções P-T =====
+     * Cenário do usuário (16ª rodada): janela de teste 3600-3700 mV —
+     * % ignora a tensão de carga (>= 3700 -> 100) e só se move na
+     * bateria; aprendizado congelado; reboot mantém; reset devolve o
+     * modo aprendido. */
+
+    /* P — janela manual 3600-3700: mapeamento pedido pelo usuário
+     * (carga "ignorada" em 100%, meio amplificado 9x pelo std_mv,
+     * <= 3600 em 0%) + religação do % no próximo poll (s_recal). */
+    {
+        CHECK(battery_set_anchors(3600, 3700),
+              "P: set(3600,3700) recusado (esperado: aceito)");
+        CHECK(battery_anchor_min() == 3600 && battery_anchor_max() == 3700,
+              "P: âncoras = %d-%d (esperado 3600-3700)",
+              battery_anchor_min(), battery_anchor_max());
+        CHECK(battery_anchors_manual(), "P: flag manual não ativa");
+        CHECK(curve_pct(4176) == 100,
+              "P: carga 4176 mV -> %d (esperado 100: ignora a carga alta)",
+              curve_pct(4176));
+        CHECK(curve_pct(3900) == 100,
+              "P: repouso pós-carga 3900 mV -> %d (esperado 100)",
+              curve_pct(3900));
+        CHECK(curve_pct(3700) == 100,
+              "P: topo 3700 mV -> %d (esperado 100)", curve_pct(3700));
+        CHECK(curve_pct(3675) == 78,
+              "P: 3675 mV -> %d (esperado 78)", curve_pct(3675));
+        CHECK(curve_pct(3650) == 45,
+              "P: 3650 mV -> %d (esperado 45)", curve_pct(3650));
+        CHECK(curve_pct(3600) == 0,
+              "P: base 3600 mV -> %d (esperado 0)", curve_pct(3600));
+        CHECK(curve_pct(3500) == 0,
+              "P: abaixo da base 3500 mV -> %d (esperado 0)", curve_pct(3500));
+        battery_ingest(3650);           /* consome s_recal (como o reset) */
+        CHECK(battery_percent() == curve_pct(battery_slow_mv()),
+              "P: pct não religou na janela manual: %d != curva %d",
+              battery_percent(), curve_pct(battery_slow_mv()));
+    }
+
+    /* Q — aprendizado CONGELADO enquanto manual. Sem o freeze: o sag
+     * 2815 mV (14ª rodada, pct <= 30) arrastaria o vmin (|2815-3600| > 15,
+     * vão 885 >= 600) e a carga 4250 arrastaria o vmax (> 3700+15, vão
+     * 650 >= 600) — os dois envenenariam o teste do usuário. */
+    {
+        battery_ingest(3606);
+        CHECK(battery_percent() <= 30,
+              "Q: pct %d > 30 (precondição do learn de vmin)",
+              battery_percent());
+        battery_learn(2815);
+        CHECK(battery_anchor_min() == 3600,
+              "Q: vmin arrastado p/ %d (esperado congelado em 3600)",
+              battery_anchor_min());
+        battery_ingest(4172);           /* candidato (salto +566) */
+        battery_ingest(4176);           /* sustentado -> carregando */
+        CHECK(strcmp(battery_state_str(), "carregando") == 0,
+              "Q: estado = %s (esperado carregando)", battery_state_str());
+        battery_learn(4250);
+        battery_learn(4250);
+        CHECK(battery_anchor_max() == 3700,
+              "Q: vmax arrastado p/ %d (esperado congelado em 3700)",
+              battery_anchor_max());
+    }
+
+    /* R — round-trip NVS: "reboot" mantém a janela manual (flag man=1
+     * bypassa os guardas do aprendido); SEM a flag, o loader mantém o
+     * comportamento antigo chave a chave (vmin 3600 passa no guard
+     * <= 3700; vmax 3700 REPROVA no guard >= 3900 -> fica 4200; vão
+     * 600 >= 600 mantém o par) — NVS corrompida/apagada-man não abre
+     * janela estreita sozinha. */
+    {
+        battery_calib_load();           /* simula o boot */
+        CHECK(battery_anchor_min() == 3600 && battery_anchor_max() == 3700 &&
+              battery_anchors_manual(),
+              "R: reload manual = %d-%d man=%d (esperado 3600-3700 man=1)",
+              battery_anchor_min(), battery_anchor_max(),
+              battery_anchors_manual());
+        nvs_handle_t h;
+        nvs_open("batt", NVS_READWRITE, &h);
+        nvs_set_u8(h, "man", 0);        /* mesmo par, sem a flag */
+        nvs_commit(h);
+        nvs_close(h);
+        battery_calib_load();
+        CHECK(battery_anchor_min() == 3600 && battery_anchor_max() == 4200 &&
+              !battery_anchors_manual(),
+              "R: sem flag, loader mudou: %d-%d man=%d (esperado 3600-4200 "
+              "man=0: vmax 3700 reprovado no guard >= 3900)",
+              battery_anchor_min(), battery_anchor_max(),
+              battery_anchors_manual());
+    }
+
+    /* S — "Zerar calibração" limpa o manual (persistido) e o aprendizado
+     * VOLTA: em carga, 4250 > 4200+15 com vão 950 >= 600 aprende. */
+    {
+        battery_set_anchors(3600, 3700);    /* reativa p/ testar o reset */
+        battery_reset_calibration();
+        CHECK(battery_anchor_min() == 3300 && battery_anchor_max() == 4200 &&
+              !battery_anchors_manual(),
+              "S: pós-reset = %d-%d man=%d (esperado 3300-4200 man=0)",
+              battery_anchor_min(), battery_anchor_max(),
+              battery_anchors_manual());
+        battery_calib_load();               /* reboot pós-reset: fábrica */
+        CHECK(battery_anchor_min() == 3300 && battery_anchor_max() == 4200,
+              "S: reload pós-reset = %d-%d (esperado 3300-4200)",
+              battery_anchor_min(), battery_anchor_max());
+        CHECK(strcmp(battery_state_str(), "carregando") == 0,
+              "S: estado = %s (esperado carregando: herdado de Q)",
+              battery_state_str());
+        battery_learn(4250);
+        CHECK(battery_anchor_max() == 4250,
+              "S: vmax não aprendido pós-reset: %d (esperado 4250)",
+              battery_anchor_max());
+        battery_reset_calibration();        /* devolve fábrica p/ seção T */
+    }
+
+    /* T — validação da entrada manual: invertido, fora da faixa elétrica
+     * absoluta e vão < 50 são recusados SEM tocar nas âncoras; a
+     * fronteira vão == 50 é aceita. */
+    {
+        CHECK(!battery_set_anchors(3700, 3600), "T: par invertido aceito");
+        CHECK(!battery_set_anchors(2000, 4200), "T: vmin < 2800 aceito");
+        CHECK(!battery_set_anchors(3600, 4500), "T: vmax > 4400 aceito");
+        CHECK(!battery_set_anchors(3600, 3649), "T: vão 49 mV aceito");
+        CHECK(battery_anchor_min() == 3300 && battery_anchor_max() == 4200,
+              "T: set inválido mexeu nas âncoras: %d-%d (esperado 3300-4200)",
+              battery_anchor_min(), battery_anchor_max());
+        CHECK(battery_set_anchors(3600, 3650),
+              "T: vão 50 mV (fronteira) recusado");
+        CHECK(battery_anchors_manual(), "T: flag manual não ativa na fronteira");
+        battery_reset_calibration();        /* limpeza: NVS volta a fábrica */
+        battery_calib_load();
+        CHECK(battery_anchor_min() == 3300 && battery_anchor_max() == 4200 &&
+              !battery_anchors_manual(),
+              "T: limpeza falhou: %d-%d man=%d",
+              battery_anchor_min(), battery_anchor_max(),
+              battery_anchors_manual());
+    }
+
     if (fails) { printf("BATT TEST: %d FALHA(S)\n", fails); return 1; }
-    printf("BATT TEST: OK (BAT.2 estados + BAT.1a âncoras + BAT.1c estabilidade)\n");
+    printf("BATT TEST: OK (BAT.2 estados + BAT.1a âncoras + BAT.1c estabilidade + BAT.1d manual)\n");
     return 0;
 }

@@ -54,6 +54,19 @@
  *    O "Zerar calibração" agora religa o % na hora (flag consumida no
  *    poll seguinte) em vez de esperar o passo descer até a nova curva.
  *    Detalhes e números de campo: docs/POWER.md §BAT.1c.
+ *  - BAT.1d (v5.16.1): ÂNCORAS MANUAIS p/ teste de campo. Pedido da 16ª
+ *    rodada: janela 3600-3700 mV para o teste final de descarga — o %
+ *    ignora a tensão de carga (>= 3700 -> 100%) e só se move na bateria.
+ *    battery_set_anchors() valida pela sanidade ELÉTRICA absoluta
+ *    (2800..4400 mV, vão >= 50); os guardas do aprendido (vão >= 600,
+ *    vmax >= 3900) protegem o aprendiz de sags, não o usuário de uma
+ *    janela de teste estreita. Enquanto manual: battery_learn() congela
+ *    (um sag profundo arrastaria o vmin e envenenaria o teste), a flag
+ *    "man" persiste no NVS (reboot mantém a janela) e o Config→Sistema
+ *    mostra "(manual)". "Zerar calibração" limpa a flag e devolve o modo
+ *    aprendido. Entrada: Lua pda.battery.set(min,max) — o VALOR vira dado
+ *    de runtime, não código: testar janelas não exige firmware novo.
+ *    Detalhes: docs/POWER.md §BAT.1d.
  *
  * Por que task e não leitura sob demanda: a 1ª conversão oneshot após
  * acordar o ADC leva ~ms e o Slint roda em task de evento; manter o poll
@@ -116,6 +129,7 @@ static TaskHandle_t s_task = NULL;
 /* BAT.1a: âncoras do remapeamento da curva (aprendidas em campo, NVS). */
 static int s_vmin = 3300;          /* = extremo 0% da s_curve (padrão) */
 static int s_vmax = 4200;          /* = extremo 100% da s_curve (padrão) */
+static int s_manual = 0;           /* BAT.1d: 1 = janela manual (learn congelado) */
 
 #define BATT_SAMPLES     8
 #define BATT_POLL_MS     4000
@@ -148,7 +162,8 @@ static int s_vmax = 4200;          /* = extremo 100% da s_curve (padrão) */
 #define BATT_ANCH_SPAN     600     /* vão mín. entre âncoras (sanidade) */
 #define BATT_LEARN_HYST    15      /* só move âncora além desta margem */
 #define BATT_LEARN_PCT     30      /* vmin só aprende com pct <= 30% */
-#define BATT_NVS_NS        "batt"  /* chaves i32: "vmin", "vmax" */
+#define BATT_NVS_NS        "batt"  /* chaves i32: "vmin", "vmax"; u8: "man" */
+#define BATT_MAN_SPAN_MIN  50      /* BAT.1d: vão mín. da janela MANUAL (teste) */
 
 /* Estados (s_state). Exposos p/ UI/log como texto via battery_state_str(). */
 #define BSTAT_BATTERY   0   /* na bateria: % segue a curva */
@@ -200,6 +215,7 @@ static void calib_persist(void)
     if (nvs_open(BATT_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_i32(h, "vmin", s_vmin);
     nvs_set_i32(h, "vmax", s_vmax);
+    nvs_set_u8(h, "man", s_manual ? 1 : 0);   /* BAT.1d */
     nvs_commit(h);
     nvs_close(h);
 }
@@ -208,20 +224,44 @@ BATT_VIS void battery_calib_load(void)
 {
     s_vmin = BATT_STD_MV_MIN;
     s_vmax = BATT_STD_MV_MAX;
+    s_manual = 0;
     nvs_handle_t h;
     if (nvs_open(BATT_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
         int32_t v;
-        if (nvs_get_i32(h, "vmin", &v) == ESP_OK &&
-            v >= BATT_ANCH_ABS_MIN && v <= 3700) s_vmin = v;
-        if (nvs_get_i32(h, "vmax", &v) == ESP_OK &&
-            v >= 3900 && v <= BATT_ANCH_ABS_MAX) s_vmax = v;
+        uint8_t man = 0;
+        nvs_get_u8(h, "man", &man);   /* ausente -> 0: comportamento antigo */
+        if (man) {
+            /* BAT.1d: janela MANUAL — só sanidade elétrica absoluta. Os
+             * guardas do aprendido (vmax >= 3900, vão >= 600) NÃO se
+             * aplicam: eles protegem o aprendiz de sags; uma janela de
+             * teste estreita (ex. 3600-3700) é decisão do usuário. */
+            int32_t lo = 0, hi = 0;
+            if (nvs_get_i32(h, "vmin", &lo) == ESP_OK &&
+                nvs_get_i32(h, "vmax", &hi) == ESP_OK &&
+                lo >= BATT_ANCH_ABS_MIN && hi <= BATT_ANCH_ABS_MAX &&
+                hi - lo >= BATT_MAN_SPAN_MIN) {
+                s_vmin = lo;
+                s_vmax = hi;
+                s_manual = 1;
+            }
+        } else {
+            if (nvs_get_i32(h, "vmin", &v) == ESP_OK &&
+                v >= BATT_ANCH_ABS_MIN && v <= 3700) s_vmin = v;
+            if (nvs_get_i32(h, "vmax", &v) == ESP_OK &&
+                v >= 3900 && v <= BATT_ANCH_ABS_MAX) s_vmax = v;
+        }
         nvs_close(h);
     }
-    if (s_vmax - s_vmin < BATT_ANCH_SPAN) {   /* par inválido: de fábrica */
+    /* Par inválido: de fábrica. (Vão manual já foi validado acima — o
+     * span de 600 do aprendido não se aplica à janela de teste.) */
+    if (!s_manual && s_vmax - s_vmin < BATT_ANCH_SPAN) {
         s_vmin = BATT_STD_MV_MIN;
         s_vmax = BATT_STD_MV_MAX;
     }
-    if (s_vmin != BATT_STD_MV_MIN || s_vmax != BATT_STD_MV_MAX) {
+    if (s_manual) {
+        ESP_LOGI(TAG, "âncoras MANUAIS (NVS): %d-%d mV (aprendizado congelado)",
+                 s_vmin, s_vmax);
+    } else if (s_vmin != BATT_STD_MV_MIN || s_vmax != BATT_STD_MV_MAX) {
         ESP_LOGI(TAG, "âncoras da bateria (NVS): %d-%d mV", s_vmin, s_vmax);
     }
 }
@@ -230,13 +270,42 @@ void battery_reset_calibration(void)
 {
     s_vmin = BATT_STD_MV_MIN;
     s_vmax = BATT_STD_MV_MAX;
+    s_manual = 0;   /* BAT.1d: volta ao modo aprendido */
     calib_persist();
     /* BAT.1c: chamado da thread da UI — o % é religado pela task no poll
      * seguinte (flag volatile; nada de escrever s_pct fora da task). */
     s_recal = true;
-    ESP_LOGI(TAG, "âncoras resetadas p/ padrão da curva: %d-%d mV "
-             "(%% religado no próximo poll)", s_vmin, s_vmax);
+    ESP_LOGI(TAG, "âncoras resetadas p/ padrão da curva: %d-%d mV, modo "
+             "aprendido de volta (%% religado no próximo poll)", s_vmin, s_vmax);
 }
+
+/* BAT.1d (v5.16.1): janela de âncoras MANUAL p/ teste de campo sem novo
+ * firmware (Lua: pda.battery.set(min,max) -> bool). O vão mínimo do modo
+ * APRENDIDO (600 mV) não se aplica: ele existe para um sag não envenenar
+ * o par aprendido, não para limitar uma janela de teste deliberada — aqui
+ * vale a sanidade elétrica absoluta (2800..4400, vão >= 50). Learn
+ * congela enquanto manual (ver battery_learn). Chamado da thread Lua/UI:
+ * mesmo padrão do reset (ints simples + s_recal; nada de s_pct aqui). */
+bool battery_set_anchors(int vmin, int vmax)
+{
+    if (vmin < BATT_ANCH_ABS_MIN || vmax > BATT_ANCH_ABS_MAX ||
+        vmax - vmin < BATT_MAN_SPAN_MIN) {
+        ESP_LOGW(TAG, "âncoras manuais RECUSADAS: %d-%d mV (válidas: "
+                 "%d..%d mV, vão >= %d mV)", vmin, vmax,
+                 BATT_ANCH_ABS_MIN, BATT_ANCH_ABS_MAX, BATT_MAN_SPAN_MIN);
+        return false;
+    }
+    ESP_LOGI(TAG, "âncoras manuais: %d-%d mV (aprendizado congelado; "
+             "%% religado no próximo poll)", vmin, vmax);
+    s_vmin = vmin;
+    s_vmax = vmax;
+    s_manual = 1;
+    calib_persist();
+    s_recal = true;
+    return true;
+}
+
+bool battery_anchors_manual(void) { return s_manual != 0; }
 
 int battery_anchor_min(void) { return s_vmin; }
 int battery_anchor_max(void) { return s_vmax; }
@@ -254,6 +323,7 @@ int battery_anchor_max(void) { return s_vmax; }
  *    limita escritas NVS (cada movimento > 15 mV grava; bounded). */
 BATT_VIS void battery_learn(int bmv)
 {
+    if (s_manual) return;   /* BAT.1d: janela do usuário — não contaminar */
     if (s_state == BSTAT_CHARGING) {
         if (bmv > BATT_ANCH_ABS_MAX) return;              /* leitura inválida */
         if (bmv > s_vmax + BATT_LEARN_HYST && bmv - s_vmin >= BATT_ANCH_SPAN) {
@@ -601,9 +671,11 @@ void battery_describe(char *buf, int sz)
     }
     /* adc_unit_t é 0-based: imprime unit+1 (v5.12.0 dizia "ADC1" por bug
      * de exibição; o canal certo sempre foi ADC2_CH4/GPIO53).
-     * BAT.1a: âncoras no meio p/ coleta de campo sem serial. */
-    snprintf(buf, sz, "%d%% (%d mV, ânc %d-%d mV, ADC%d_CH%d/GPIO%d, %s%s%s)",
-             s_pct, s_batt_mv, s_vmin, s_vmax,
+     * BAT.1a: âncoras no meio p/ coleta de campo sem serial.
+     * BAT.1d: "(manual)" marca a janela de teste — verificação sem serial
+     * de que o pda.battery.set() valeu (buf 128 do caller: pior caso ~92). */
+    snprintf(buf, sz, "%d%% (%d mV, ânc %d-%d mV%s, ADC%d_CH%d/GPIO%d, %s%s%s)",
+             s_pct, s_batt_mv, s_vmin, s_vmax, s_manual ? " (manual)" : "",
              (int)BOARD_BATT_ADC_UNIT + 1,
              (int)BOARD_BATT_ADC_CHANNEL, (int)BOARD_BATT_SENSE_GPIO,
              s_calibrated ? "cal. eFuse" : "fallback linear",

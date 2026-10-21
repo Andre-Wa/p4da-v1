@@ -9,6 +9,7 @@
 
 #include "lua_runtime.h"
 #include "pda_config.h"
+#include "battery.h"      /* BAT.1d: pda.battery.* (âncoras manuais) */
 #include "storage_init.h"
 
 #include "esp_log.h"
@@ -280,6 +281,35 @@ static int l_fs_remove(lua_State *L)
     return 1;
 }
 
+/* ---- BAT.1d (v5.16.1): âncoras manuais da bateria -------------------
+ * pda.battery.set(min,max) -> bool  janela de teste (learn congela; NVS)
+ * pda.battery.get() -> min,max,manual
+ * pda.battery.reset()               = botão "Zerar calibração"
+ * O VALOR é dado de runtime (NVS), não código: testar janelas de curva
+ * não exige firmware novo (docs/POWER.md §BAT.1d). */
+static int l_batt_set(lua_State *L)
+{
+    const int lo = (int)luaL_checkinteger(L, 1);
+    const int hi = (int)luaL_checkinteger(L, 2);
+    lua_pushboolean(L, battery_set_anchors(lo, hi));
+    return 1;
+}
+
+static int l_batt_get(lua_State *L)
+{
+    lua_pushinteger(L, battery_anchor_min());
+    lua_pushinteger(L, battery_anchor_max());
+    lua_pushboolean(L, battery_anchors_manual());
+    return 3;
+}
+
+static int l_batt_reset(lua_State *L)
+{
+    (void)L;
+    battery_reset_calibration();
+    return 0;
+}
+
 /* ---------------- registro da API --------------------------------- */
 static const luaL_Reg s_pda_fs[] = {
     { "read", l_fs_read }, { "write", l_fs_write }, { "append", l_fs_append },
@@ -288,6 +318,10 @@ static const luaL_Reg s_pda_fs[] = {
 };
 static const luaL_Reg s_pda_settings[] = {
     { "get", l_settings_get }, { "set", l_settings_set }, { "save", l_settings_save },
+    { NULL, NULL },
+};
+static const luaL_Reg s_pda_battery[] = {   /* BAT.1d (v5.16.1) */
+    { "set", l_batt_set }, { "get", l_batt_get }, { "reset", l_batt_reset },
     { NULL, NULL },
 };
 static const luaL_Reg s_pda[] = {
@@ -314,6 +348,8 @@ esp_err_t lua_runtime_init(void)
     lua_setfield(s_L, -2, "fs");
     lua_newtable(s_L); luaL_setfuncs(s_L, s_pda_settings, 0);
     lua_setfield(s_L, -2, "settings");
+    lua_newtable(s_L); luaL_setfuncs(s_L, s_pda_battery, 0);
+    lua_setfield(s_L, -2, "battery");
     lua_setglobal(s_L, "pda");
 
     ESP_LOGI(TAG, "VM Lua pronta (Lua %s), teto %d KB",

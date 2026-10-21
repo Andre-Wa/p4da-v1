@@ -92,8 +92,25 @@ void battery_describe(char *buf, int sz);
 int battery_anchor_min(void);
 int battery_anchor_max(void);
 
-/** Restaura as âncoras de fábrica (botão Config→Sistema). Persiste. */
+/** Restaura as âncoras de fábrica (botão Config→Sistema; também limpa a
+ *  janela manual da BAT.1d). Persiste. */
 void battery_reset_calibration(void);
+
+/** BAT.1d (v5.16.1): janela de âncoras MANUAL — teste de campo sem novo
+ *  firmware (Lua: pda.battery.set(min,max)). Valida só pela sanidade
+ *  ELÉTRICA absoluta (2800..4400 mV, vão >= 50 mV): os guardas do modo
+ *  aprendido (vão >= 600, vmax >= 3900) protegem o APRENDIZ de sags, não
+ *  o usuário de uma janela de teste estreita. Persiste no NVS (ns "batt",
+ *  flag "man") e sobrevive a reboot; enquanto ativa, battery_learn()
+ *  congela (senão um sag profundo — 2815 mV na 14ª rodada — arrasta o
+ *  vmin e envenena a medição) e a linha Config→Sistema mostra "(manual)".
+ *  Retorna false se o par for recusado (âncoras intactas). Chamável da
+ *  thread Lua/UI: mesmo padrão do reset (ints + flag s_recal consumida
+ *  pela task no próximo poll). */
+bool battery_set_anchors(int vmin, int vmax);
+
+/** true enquanto a janela manual (BAT.1d) estiver ativa. */
+bool battery_anchors_manual(void);
 
 #ifdef __cplusplus
 }

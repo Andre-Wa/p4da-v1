@@ -310,6 +310,65 @@ religa o % na curva nova no 1º poll).
 3. Anotar o comportamento em carga: durante CC/CV a leitura lê alto de
    propósito; "100%" só é confiável em repouso pós-carga.
 
+### BAT.1d — âncoras MANUAIS para teste de campo (v5.16.1, IMPLEMENTADO; validação HW pendente)
+
+Pedido da 16ª rodada: *"abaixar o máximo do leitor de 4.2 V para 3.7 V e o
+mínimo para 3.6 V — assim ele ignora a carga alta e faz a leitura apenas
+quando desconectar do USB"* — um último teste de descarga cujos resultados
+alimentam a BAT.1b/v5.17.0. Com a v5.16.0 isso era IMPOSSÍVEL sem firmware
+novo, por três barreiras no código:
+
+1. não havia entrada manual — só o aprendizado (com guardas) e o botão
+   "Zerar calibração" (→ fábrica 3300-4200);
+2. `battery_calib_load()` rejeitava o par no boot: o guard do vmax exige
+   ≥ 3900 mV e o vão ≥ 600 mV (3700 e 100 reprovam nos dois);
+3. mesmo aceito, `battery_learn()` envenenaria o teste: o primeiro sag
+   profundo (14ª rodada: 2815 mV com pct ≤ 30) arrastaria o vmin p/ baixo.
+
+A v5.16.1 cria a entrada que faltava — e com ela o VALOR das âncoras vira
+dado de runtime (NVS), não código: testar janelas de curva não exige mais
+versão nova de firmware ("o leitor que não precisa ser versionado").
+
+**Mecanismo** (`main/battery.c`, flag NVS `man` no ns `batt`):
+- `battery_set_anchors(vmin, vmax)` valida só pela sanidade ELÉTRICA
+  absoluta (2800..4400 mV, vão ≥ 50 mV). Os guardas do modo aprendido
+  (vão ≥ 600, vmax ≥ 3900) protegem o APRENDIZ de sags; uma janela de
+  teste estreita é decisão do usuário e passa por cima deles.
+- Lua (tela Scripts): `pda.battery.set(3600, 3700)` → bool;
+  `local lo, hi, man = pda.battery.get()`; `pda.battery.reset()`.
+  Script pronto: `sdcard-template/pda/scripts/ancoras_teste.lua` (os dois
+  números do topo são editáveis no próprio aparelho, pelo editor de notas).
+- Enquanto manual: `battery_learn()` congela (não grava nada no NVS); o
+  reboot mantém a janela (flag `man` persistida ao lado de vmin/vmax); a
+  linha Config→Sistema mostra `ânc 3600-3700 mV (manual)` — verificação
+  de campo sem serial.
+- "Zerar calibração" (botão ou `pda.battery.reset()`) limpa a flag,
+  restaura fábrica e DEVOLVE o modo aprendido.
+- Sem a flag `man` o loader mantém os guardas antigos chave a chave
+  (NVS corrompida não abre janela estreita sozinha) — teste de host R.
+
+**O que esperar do teste 3600-3700** (artefatos esperados, não bugs):
+- Em carga (4176 mV) e no repouso pós-carga (≥ 3700 mV): % travado em 100
+  — é o "ignora a carga alta" pedido.
+- Na bateria o % SÓ se move entre 3700 mV (100%) e 3600 mV (0%): vão de
+  100 mV amplificado 9× pela curva padrão; a dança ±50 mV de brilho/Wi-Fi
+  (14ª rodada) vale ±45 pts de curva — o passo da BAT.1c (1 pt/12 s +
+  banda morta) segura a UI, mas o número vai parecer uma escada lenta.
+  Esperado.
+- Abaixo de 3600 mV o % fica em 0 até o fim — e esta célula SABE descer
+  (sag 2815 mV com tudo ligado): sob carga pesada o teste pode passar a
+  maior parte do tempo em 0%. **O dado que importa para a v5.17.0 é o
+  mV** (linha ao vivo do Config→Sistema, a cada 4 s): anotar mV × minuto
+  desde a desconexão do USB + os instantes em que o % cruza
+  100→75→50→25→0. O % é a régua; o mV é a medição.
+- A detecção de carregador NÃO muda: a máquina BAT.2 usa o salto de
+  tensão crua (+40 mV confirmado em 2 polls), independente das âncoras —
+  "a placa detecta o USB plugado" segue funcionando igual.
+
+Teste de host: `host_batt_test.c` seções P–T (mapeamento da janela,
+congelamento do learn, round-trip NVS da flag, reset devolvendo o modo
+aprendido, validação da entrada).
+
 ## Plano de conclusão da bateria (definido 2026-10-17, v5.16.0)
 
 Pedido do usuário na 15ª rodada: "um plano para terminar a implementação
@@ -347,7 +406,9 @@ sob carga — ✅ 15ª rodada).
    ~10% (procedimento sem serial no §BAT.1a item 4); ajustar `s_curve`
    piecewise-linear p/ a célula 14500 do usuário; conferir o fator do
    divisor (~1,68). Sem os pares do usuário esta fase NÃO anda — é a única
-   fase do plano que depende de coleta dele.
+   fase do plano que depende de coleta dele. A coleta da 16ª/17ª rodada
+   pode usar a JANELA MANUAL da §BAT.1d (v5.16.1) como régua de campo: o
+   mV da linha ao vivo continua sendo a medição, com ou sem âncoras.
 3. **BAT.3 — autonomia estimada**: perfis de corrente por estado de energia
    (ACTIVE brilho X, DIM, OFF/standby, hibernate; deltas de Wi-Fi, beep e
    PA tocando — medir em série com o multímetro, procedimento na §Plano de

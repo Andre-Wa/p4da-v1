@@ -788,6 +788,29 @@ toda a interface".
       aplicado(s) no loop`; hibernar da Config loga `sessão salva:
       app=settings` (sem note=); regression: música/beep/teclado normais.
 
+### BAT.1d — âncoras manuais p/ teste de descarga (v5.16.1, 2026-10-21)
+Pedido da 16ª rodada: janela de teste 3600-3700 mV ("ignorar a carga alta;
+ler só na bateria") para o último teste de descarga, cujos resultados
+alimentam a BAT.1b/v5.17.0. Com a v5.16.0 era impossível sem firmware novo:
+não havia entrada manual, o loader rejeitava o par (vmax ≥ 3900, vão ≥ 600)
+e o learn arrastaria o vmin no primeiro sag profundo. O VALOR vira dado de
+runtime (NVS + Lua), então testar janelas novas não exige mais versão.
+- [x] `battery_set_anchors()` (sanidade elétrica absoluta: 2800..4400 mV,
+      vão ≥ 50) + flag NVS `man` + learn congelado enquanto manual +
+      "(manual)" na linha Config→Sistema; "Zerar calibração" limpa a flag
+      e devolve o modo aprendido; loader sem a flag mantém os guardas
+      antigos chave a chave.
+- [x] Lua: `pda.battery.set/get/reset` (docs/LUA.md) + script pronto
+      `scripts/ancoras_teste.lua` (janela editável no próprio aparelho).
+- [x] Host test P–T no `host_batt_test.c` (mapeamento 3600-3700, freeze do
+      learn contra sag 2815/carga 4250, round-trip NVS da flag, reset,
+      validação da entrada).
+- [ ] VALIDAÇÃO HW (16ª/17ª rodada): rodar o script na tela Scripts,
+      conferir `ânc 3600-3700 mV (manual)` no Config→Sistema, desconectar
+      do USB e anotar mV × minuto (régua: % cruza 100→0 entre 3700 e 3600
+      mV; abaixo de 3600 fica 0% — esperado). Resultados → BAT.1b/v5.17.0.
+      Leva junto os itens pendentes da 16ª rodada (UI-LOOP-GATE, acima).
+
 ### Plano de conclusão — BATERIA e SOM (definido 2026-10-17, pedido da 15ª rodada)
 Ordenação em nível de milestone; detalhe, aceites e riscos nos donos:
 **docs/POWER.md §Plano de conclusão da bateria** e **docs/AUDIO.md §2**.
