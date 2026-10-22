@@ -310,6 +310,19 @@ religa o % na curva nova no 1º poll).
 3. Anotar o comportamento em carga: durante CC/CV a leitura lê alto de
    propósito; "100%" só é confiável em repouso pós-carga.
 
+**Coleta de campo (v5.16.2)**: não é mais preciso olhar a tela e
+transcrever à mão — o script `scripts/log_bateria.lua` anexa a cada 60 s
+uma linha `t_min;uptime_s;hora;mv;pct;estado` em `logs/bateria.csv`
+(separador `;`, abre no Excel; cada linha é fechada na hora, então a
+bateria que morre perde no máximo o minuto em curso). Ele para sozinho
+quando o carregador volta (DEPOIS de ver a bateria — pode ser iniciado
+antes de desconectar), após 10 h ou se a gravação falhar; a UI fica livre
+durante o teste. Procedimento: `ancoras_teste.lua` (se for usar a janela
+manual) → `log_bateria.lua` → desconectar o USB → usar normalmente →
+plugar o carregador ao terminar → enviar o `logs/bateria.csv`. A coluna
+`mv` é a medição p/ o refino da `s_curve` (item 1); `hora` exige NTP
+(Wi-Fi) — sem ele fica `-` e o eixo do tempo é o `uptime_s`.
+
 ### BAT.1d — âncoras MANUAIS para teste de campo (v5.16.1, IMPLEMENTADO; validação HW pendente)
 
 Pedido da 16ª rodada: *"abaixar o máximo do leitor de 4.2 V para 3.7 V e o
@@ -408,7 +421,10 @@ sob carga — ✅ 15ª rodada).
    divisor (~1,68). Sem os pares do usuário esta fase NÃO anda — é a única
    fase do plano que depende de coleta dele. A coleta da 16ª/17ª rodada
    pode usar a JANELA MANUAL da §BAT.1d (v5.16.1) como régua de campo: o
-   mV da linha ao vivo continua sendo a medição, com ou sem âncoras.
+   mV da linha ao vivo continua sendo a medição, com ou sem âncoras. Desde
+   a v5.16.2 o `scripts/log_bateria.lua` AUTOMATIZA a coleta (mV × minuto
+   em `logs/bateria.csv` — §BAT.1b "Coleta de campo"): sem transcrever a
+   linha ao vivo à mão.
 3. **BAT.3 — autonomia estimada**: perfis de corrente por estado de energia
    (ACTIVE brilho X, DIM, OFF/standby, hibernate; deltas de Wi-Fi, beep e
    PA tocando — medir em série com o multímetro, procedimento na §Plano de

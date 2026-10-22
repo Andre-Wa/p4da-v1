@@ -39,3 +39,17 @@ g++ -std=c++17 -Wall -Wextra -pthread -I main \
 
 echo "--- rodando /tmp/uigate_bin ---"
 /tmp/uigate_bin
+
+# ---- LUA-BIND (v5.16.2): lua_runtime.c REAL no Lua 5.4 do host (shim
+# lua55_shim.h casa o lua_newstate de 3 args da 5.5) + o script REAL
+# log_bateria.lua rodado end-to-end contra stubs de bateria/storage/
+# relógio — o CSV do logger nasce e é afirmado aqui, não só no alvo. ----
+rm -rf /tmp/luabind
+gcc -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
+    -include tools/hosttest/lua55_shim.h \
+    -I tools/hosttest/stubs -I main -I "$LUA_INC" \
+    main/lua_runtime.c tools/hosttest/host_lua_test.c \
+    -l"$LUA_LIB" -lm -o /tmp/luabind_bin
+
+echo "--- rodando /tmp/luabind_bin ---"
+/tmp/luabind_bin

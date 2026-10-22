@@ -16,6 +16,9 @@
 #include "esp_timer.h"
 #include "esp_random.h"
 
+#include "freertos/FreeRTOS.h"  /* v5.16.2: pda.sleep_ms (vTaskDelay) */
+#include "freertos/task.h"
+
 #include "lua.h"
 #include "lualib.h"
 #include "lauxlib.h"
@@ -126,6 +129,21 @@ static int l_millis(lua_State *L)
     /* lua_Integer é 32-bit neste port (LUA_32BITS): envolve ~24,8 dias */
     lua_pushinteger(L, (lua_Integer)(esp_timer_get_time() / 1000LL));
     return 1;
+}
+
+/* ---- v5.16.2 (coleta BAT.1b): pda.sleep_ms ----------------------------
+ * Suspende a task do SCRIPT ("lua_script", main.cpp) — a UI segue viva;
+ * outros scripts é que aguardam (g_lua_mtx). Não gasta o orçamento de
+ * instruções do hook (ele conta instruções, não tempo): um loop de
+ * amostragem de minuto roda horas dentro do teto de 20M. Clamp
+ * 0..PDA_LUA_SLEEP_MAX_MS — chamada nenhuma dorme "para sempre". */
+static int l_sleep_ms(lua_State *L)
+{
+    lua_Integer ms = luaL_checkinteger(L, 1);
+    if (ms < 0) ms = 0;
+    if (ms > PDA_LUA_SLEEP_MAX_MS) ms = PDA_LUA_SLEEP_MAX_MS;
+    if (ms > 0) vTaskDelay(pdMS_TO_TICKS((uint32_t)ms));
+    return 0;
 }
 
 static int l_version(lua_State *L)
@@ -281,10 +299,21 @@ static int l_fs_remove(lua_State *L)
     return 1;
 }
 
+/* v5.16.2: script cria diretório (logs/ p/ o log_bateria.lua). Mesma
+ * semântica do storage_ensure_dir: já existir não é erro. */
+static int l_fs_mkdir(lua_State *L)
+{
+    char path[192];
+    resolve_path(L, luaL_checkstring(L, 1), path, sizeof(path));
+    lua_pushboolean(L, storage_ensure_dir(path) == ESP_OK);
+    return 1;
+}
+
 /* ---- BAT.1d (v5.16.1): âncoras manuais da bateria -------------------
  * pda.battery.set(min,max) -> bool  janela de teste (learn congela; NVS)
  * pda.battery.get() -> min,max,manual
  * pda.battery.reset()               = botão "Zerar calibração"
+ * pda.battery.read() -> mv,pct,estado  (v5.16.2: leitura ao vivo p/ logger)
  * O VALOR é dado de runtime (NVS), não código: testar janelas de curva
  * não exige firmware novo (docs/POWER.md §BAT.1d). */
 static int l_batt_set(lua_State *L)
@@ -303,6 +332,19 @@ static int l_batt_get(lua_State *L)
     return 3;
 }
 
+/* v5.16.2: leitura AO VIVO p/ scripts de logger (log_bateria.lua). São os
+ * números da linha Config→Sistema: s_batt_mv é o filtro do qual o % deriva
+ * (rápido em carga, lento na bateria) e o estado é "bateria"/"carregando"/
+ * "assentando". -1/-1 até o 1º poll (~4 s). Leitura de ints volatile —
+ * mesmo padrão dos readers já chamados pela thread da UI. */
+static int l_batt_read(lua_State *L)
+{
+    lua_pushinteger(L, battery_mv());
+    lua_pushinteger(L, battery_percent());
+    lua_pushstring(L, battery_state_str());
+    return 3;
+}
+
 static int l_batt_reset(lua_State *L)
 {
     (void)L;
@@ -314,7 +356,7 @@ static int l_batt_reset(lua_State *L)
 static const luaL_Reg s_pda_fs[] = {
     { "read", l_fs_read }, { "write", l_fs_write }, { "append", l_fs_append },
     { "list", l_fs_list }, { "exists", l_fs_exists }, { "size", l_fs_size },
-    { "remove", l_fs_remove }, { NULL, NULL },
+    { "remove", l_fs_remove }, { "mkdir", l_fs_mkdir }, { NULL, NULL },
 };
 static const luaL_Reg s_pda_settings[] = {
     { "get", l_settings_get }, { "set", l_settings_set }, { "save", l_settings_save },
@@ -322,12 +364,13 @@ static const luaL_Reg s_pda_settings[] = {
 };
 static const luaL_Reg s_pda_battery[] = {   /* BAT.1d (v5.16.1) */
     { "set", l_batt_set }, { "get", l_batt_get }, { "reset", l_batt_reset },
+    { "read", l_batt_read },                     /* v5.16.2: ao vivo */
     { NULL, NULL },
 };
 static const luaL_Reg s_pda[] = {
     { "log", l_log }, { "toast", l_toast }, { "uptime", l_uptime },
     { "millis", l_millis }, { "version", l_version }, { "root", l_root },
-    { "sd_mounted", l_sd_mounted }, { NULL, NULL },
+    { "sd_mounted", l_sd_mounted }, { "sleep_ms", l_sleep_ms }, { NULL, NULL },
 };
 
 esp_err_t lua_runtime_init(void)

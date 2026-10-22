@@ -811,6 +811,34 @@ runtime (NVS + Lua), então testar janelas novas não exige mais versão.
       mV; abaixo de 3600 fica 0% — esperado). Resultados → BAT.1b/v5.17.0.
       Leva junto os itens pendentes da 16ª rodada (UI-LOOP-GATE, acima).
 
+### BAT.1b-coleta — logger de campo mV × minuto (v5.16.2, 2026-10-21)
+Pedido da 17ª rodada: "um script que lê a carga e escreve num arquivo a
+cada minuto a voltagem atual" — a automação da coleta que alimenta a
+BAT.1b/v5.17.0 (até aqui: ler a linha Config→Sistema a olho e transcrever
+minuto a minuto durante horas de descarga).
+- [x] Lua: `pda.battery.read()` (mv, pct, estado — os números da linha ao
+      vivo), `pda.sleep_ms()` (suspende a task do script; UI livre; clamp
+      0–600000 ms; não gasta o teto de 20M instruções — o hook conta
+      instruções, não tempo) e `pda.fs.mkdir()` (`storage_ensure_dir`).
+- [x] Script `scripts/log_bateria.lua`: `logs/bateria.csv`
+      (`t_min;uptime_s;hora;mv;pct;estado`) a cada 60 s, fclose a cada
+      linha (bateria que morre perde no máximo o minuto em curso); para
+      sozinho no carregador de volta (depois de ver a bateria — pode ser
+      iniciado antes de desconectar), após 10 h ou em falha de gravação;
+      continua arquivo existente sem duplicar header.
+- [x] Host test `host_lua_test.c` (seção LUA-BIND nova no run.sh):
+      `lua_runtime.c` REAL linkado ao Lua 5.4 do host (shim 5.5 agora no
+      repo: `tools/hosttest/lua55_shim.h`; stubs `esp_timer.h`/
+      `esp_random.h` só-declaração) + o script REAL rodado end-to-end
+      contra stubs de bateria (cenários)/storage (stdio em /tmp)/relógio
+      (+2 s/leitura) — o CSV nasce afirmado: cenário de 9 amostras, não
+      para na carga inicial, para na volta do carregador, continua sem
+      duplicar header, falha graciosa sem diretório; bindings A–C
+      (read/get, mkdir resolve + rejeita '..', sleep clamp/tipo).
+- [ ] VALIDAÇÃO HW (17ª rodada, junto c/ a BAT.1d): descarga completa na
+      janela 3600-3700 com o logger rodando → enviar o
+      `logs/bateria.csv` → pares p/ a `s_curve` da v5.17.0.
+
 ### Plano de conclusão — BATERIA e SOM (definido 2026-10-17, pedido da 15ª rodada)
 Ordenação em nível de milestone; detalhe, aceites e riscos nos donos:
 **docs/POWER.md §Plano de conclusão da bateria** e **docs/AUDIO.md §2**.

@@ -54,6 +54,7 @@ limite de instruções e de memória; erro vira mensagem no console.
 | `pda.toast(msg)` | — | mensagem curta (hoje: console) |
 | `pda.uptime()` | int | segundos desde o boot |
 | `pda.millis()` | int | ms (envolve em ~24,8 d, int32) |
+| `pda.sleep_ms(ms)` | — | v5.16.2: suspende o script (clamp 0–600000). A UI NÃO congela (o script tem task própria) e o sleep não gasta o teto de instruções — loop de minuto roda horas. Outros scripts aguardam este terminar |
 | `pda.version()` | string | versão do firmware |
 | `pda.root()` | string | raiz ativa (`/sdcard/pda` ou `/internal/pda`) |
 | `pda.sd_mounted()` | bool | |
@@ -63,6 +64,7 @@ limite de instruções e de memória; erro vira mensagem no console.
 | `pda.battery.set(min,max)` | bool | BAT.1d: âncoras manuais (mV); congela o aprendizado; persiste no NVS; ver `POWER.md §BAT.1d` |
 | `pda.battery.get()` | min,max,manual | três retornos |
 | `pda.battery.reset()` | — | = botão "Zerar calibração" (volta ao modo aprendido) |
+| `pda.battery.read()` | mv,pct,estado | v5.16.2: leitura AO VIVO — os números da linha Config→Sistema; `estado` = `"bateria"`/`"carregando"`/`"assentando"`; `-1,-1` até o 1º poll (~4 s) |
 | `pda.fs.read(p)` | string \| nil,err | |
 | `pda.fs.write(p, s)` | bool \| nil,err | sobrescreve |
 | `pda.fs.append(p, s)` | bool | |
@@ -70,6 +72,7 @@ limite de instruções e de memória; erro vira mensagem no console.
 | `pda.fs.exists(p)` | bool | |
 | `pda.fs.size(p)` | int | -1 se não existe |
 | `pda.fs.remove(p)` | bool | |
+| `pda.fs.mkdir(dir)` | bool | v5.16.2: cria diretório (já existir não é erro) |
 
 **Caminhos**: relativos à raiz ativa (`"notes/x.txt"`) ou absolutos
 (`/sdcard/...`, `/internal/...`). `..` é rejeitado.
@@ -77,9 +80,22 @@ limite de instruções e de memória; erro vira mensagem no console.
 ### Exemplos
 
 Ver `sdcard-template/pda/scripts/`: `exemplo.lua` (tour pela API),
-`organiza_notas.lua` (gera `notes/_indice.md`) e `ancoras_teste.lua`
+`organiza_notas.lua` (gera `notes/_indice.md`), `ancoras_teste.lua`
 (BAT.1d: fixa a janela de teste 3600-3700 mV do leitor de bateria —
-edite os dois números para testar outra janela, sem firmware novo).
+edite os dois números para testar outra janela, sem firmware novo) e
+`log_bateria.lua` (BAT.1b/v5.16.2: escreve `logs/bateria.csv` a cada
+minuto — mV × hora da descarga; para sozinho quando o carregador volta).
+
+### Scripts longos (loggers, v5.16.2)
+
+`pda.sleep_ms()` suspende só a task do script: a UI segue viva, a tela
+segue o power config e cada `pda.log` aparece no console. O limite de
+instruções (20M) conta instruções EXECUTADAS — sleep não gasta orçamento,
+então um loop "lê → grava → dorme" roda por horas. A serialização segue
+valendo: enquanto um logger roda, nenhum outro script inicia (o console
+avisa "já existe script rodando"). Disciplina de dado: `pda.fs.append`
+fecha o arquivo a cada linha — bateria que morre perde, no máximo, o
+minuto em curso (é assim que o `log_bateria.lua` grava).
 
 ### O que Lua NÃO faz (por decisão de escopo, ver roadmap)
 

@@ -25,12 +25,19 @@ extern "C" {
  *   pda.settings.get(k) / pda.settings.set(k,v) / pda.settings.save()
  *   pda.fs.read(p) / pda.fs.write(p,s) / pda.fs.append(p,s)
  *   pda.fs.list(dir) / pda.fs.exists(p) / pda.fs.size(p) / pda.fs.remove(p)
+ *   pda.fs.mkdir(dir) / pda.sleep_ms(ms) / pda.battery.read()|set|get|reset
  */
 
 /** Teto de instruções por execução de script (~20M = alguns segundos). */
 #define PDA_LUA_INSTRUCTION_LIMIT 20000000
 /** Teto de memória que a VM Lua pode alocar (PSRAM). */
 #define PDA_LUA_MEM_LIMIT_BYTES   (2 * 1024 * 1024)
+/** Teto por chamada do pda.sleep_ms() (v5.16.2) — clamp silencioso, não
+ *  erro. O sleep NÃO gasta o teto de instruções (o hook conta instruções
+ *  executadas, não tempo): um loop "lê+grava+dorme 60 s" roda horas dentro
+ *  dos 20M. Scripts rodam na task "lua_script" (main.cpp): dormir não
+ *  congela a UI; outros scripts é que aguardam (mutex). */
+#define PDA_LUA_SLEEP_MAX_MS      600000
 
 typedef void (*pda_lua_log_fn)(const char *line, void *ctx);
 typedef void (*pda_lua_toast_fn)(const char *msg, void *ctx);
